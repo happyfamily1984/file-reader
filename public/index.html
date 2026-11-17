@@ -7,6 +7,12 @@
 <meta name="theme-color" content="#2f5d50">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="읽어줘">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="description" content="파일, 링크, 받은 글, 성경(개역한글)을 소리 내어 읽어주는 앱">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -20,6 +26,11 @@
 </header>
 
 <main>
+  <div id="install" class="install" hidden>
+    <span id="install-msg">홈 화면에 앱으로 설치할 수 있습니다.</span>
+    <button type="button" class="btn" id="install-btn">앱 설치</button>
+    <button type="button" class="btn ghost" id="install-no" aria-label="설치 안내 닫기">닫기</button>
+  </div>
   <section id="tab-doc" class="panel">
     <label class="drop" id="drop">
       <input type="file" id="file" hidden>

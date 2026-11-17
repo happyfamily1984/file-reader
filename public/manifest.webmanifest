@@ -1,11 +1,33 @@
 {
+  "id": "./",
   "name": "읽어줘 - 글 읽어주는 앱",
   "short_name": "읽어줘",
+  "description": "파일, 링크, 받은 글, 성경(개역한글)을 소리 내어 읽어주는 앱",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#f6f4ef",
   "theme_color": "#2f5d50",
   "lang": "ko",
-  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }],
-  "share_target": { "action": "./", "method": "GET", "params": { "title": "title", "text": "text", "url": "url" } }
+  "categories": ["books", "education", "productivity"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "받은 글", "url": "./?tab=inbox" },
+    { "name": "성경", "url": "./?tab=bible" }
+  ],
+  "share_target": {
+    "action": "share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title", "text": "text", "url": "url",
+      "files": [{ "name": "file", "accept": ["application/pdf", "image/*", "text/*", "application/*", ".hwp", ".hwpx", ".epub", ".docx", ".pptx", ".xlsx"] }]
+    }
+  }
 }

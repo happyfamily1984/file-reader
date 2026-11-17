@@ -1,5 +1,32 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "public",
-  "functions": { "api/extract.js": { "maxDuration": 30 }, "api/inbox.js": { "maxDuration": 30 } }
+  "functions": {
+    "api/extract.js": {
+      "maxDuration": 30
+    },
+    "api/inbox.js": {
+      "maxDuration": 30
+    }
+  },
+  "headers": [
+    {
+      "source": "/sw.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        }
+      ]
+    },
+    {
+      "source": "/vendor/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=604800"
+        }
+      ]
+    }
+  ]
 }

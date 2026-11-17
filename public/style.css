@@ -105,3 +105,6 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1
 #inbox-list .open small { color: var(--mute); }
 #inbox-list li.new .open b::before { content: "새 글 "; color: #c0553f; font-size: 12px; }
 #inbox-list .del { border: 1px solid var(--line); background: none; border-radius: 8px; min-width: 44px; min-height: 40px; cursor: pointer; color: var(--mute); }
+.install { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--card); border: 1px solid var(--accent); border-radius: 14px; padding: 10px 12px; margin-bottom: 12px; font-size: 15px; }
+.install span { flex: 1; min-width: 12em; }
+@media (display-mode: standalone) { .install { display: none !important; } }

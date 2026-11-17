@@ -404,15 +404,53 @@ setInterval(() => { if (document.visibilityState === 'visible') checkInbox(true)
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkInbox(true); });
 checkInbox(true);
 
+// ── 앱 설치 · 오프라인 ──────────────────────────────
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('서비스 워커 등록 실패', e));
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+let installEvent = null;
+addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installEvent = e;
+  if (!store.get('noInstall', false)) $('install').hidden = false;
+});
+addEventListener('appinstalled', () => { $('install').hidden = true; });
+$('install-btn').onclick = async () => {
+  if (!installEvent) return;
+  installEvent.prompt();
+  await installEvent.userChoice;
+  installEvent = null;
+  $('install').hidden = true;
+};
+$('install-no').onclick = () => { $('install').hidden = true; store.set('noInstall', true); };
+// 아이폰·아이패드는 설치 버튼을 띄울 수 없어 방법을 안내한다.
+const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+if (ios && !standalone && !store.get('noInstall', false)) {
+  $('install-msg').textContent = '사파리 아래쪽 공유 버튼을 누르고 "홈 화면에 추가"를 고르면 앱으로 설치됩니다.';
+  $('install-btn').hidden = true;
+  $('install').hidden = false;
+}
+
 // ── 시작: 공유로 받은 내용 또는 지난번에 읽던 글 ────
 const params = new URLSearchParams(location.search);
 const shared = [params.get('url'), params.get('text')].filter(Boolean).join(' ').trim();
-if (shared) {
+if (params.has('shared')) { // 다른 앱에서 공유한 파일 (서비스 워커가 받아 둔 것)
+  history.replaceState(null, '', location.pathname);
+  run(async () => {
+    const cache = await caches.open('fr-share');
+    const res = await cache.match('shared-file');
+    if (!res) throw new Error('공유한 파일을 찾지 못했습니다. 다시 공유해 주세요.');
+    await cache.delete('shared-file');
+    const type = res.headers.get('content-type') || '';
+    await openFile(new File([await res.blob()], decodeURIComponent(res.headers.get('x-name') || 'file'), { type }));
+  });
+} else if (shared) {
   history.replaceState(null, '', location.pathname);
   const url = /https?:\/\/\S+/.exec(shared)?.[0];
   if (url) { $('link').value = url; openLink(url); } else openText(shared, params.get('title'));
 } else {
   const doc = store.get('doc', null);
   if (doc?.chunks?.length) run(async () => showDoc(doc.title, doc.chunks, store.get('pos', 0), false));
-  if (store.get('tab', 'doc') !== 'doc') showTab(store.get('tab'));
+  const tab = params.get('tab') || store.get('tab', 'doc');
+  if (params.has('tab')) history.replaceState(null, '', location.pathname);
+  if (['inbox', 'bible'].includes(tab)) showTab(tab);
 }
