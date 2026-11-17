@@ -66,6 +66,15 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
     private static final String CHANNEL = "reading";
     private static final int NOTIFICATION_ID = 1;
     private static final int MAX_PART = 3000;
+    /** 온라인 AI 목소리: voiceName 이 "cloud:<목소리 이름>" 이면 서버(/api/tts)에서 음성을 받아 재생한다. */
+    static final String CLOUD_PREFIX = "cloud:";
+    private static final int CLOUD_PART = 300;
+    private static final long CLOUD_RETRY_MS = 60000;
+    private static final java.util.regex.Pattern SPEAKABLE = java.util.regex.Pattern.compile("[\\p{L}\\p{N}]");
+    static CloudAudio.Factory cloudFactory = new CloudAudio.Factory() {
+        @Override public CloudAudio create(Context context) { return new CloudAudio.Media(); }
+    };
+    static long cloudDownUntil = 0;
 
     /** 화면(웹뷰)에 상태를 알리는 통로. */
     public interface Listener {
@@ -96,6 +105,8 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
     private MediaSessionCompat session;
     private PowerManager.WakeLock wakeLock;
     private Bitmap art;
+    private CloudAudio cloud;
+    private String ttsUrl;
 
     // ── 화면에서 부르는 정적 진입점 ──
 
@@ -142,6 +153,8 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
         wakeLock.setReferenceCounted(false);
         art = BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
         tts = new TextToSpeech(getApplicationContext(), this);
+        cloud = cloudFactory.create(this);
+        ttsUrl = getString(R.string.launch_url) + "api/tts";
 
         session = new MediaSessionCompat(this, "ReadForMe");
         session.setCallback(new MediaSessionCompat.Callback() {
@@ -206,6 +219,7 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
             tts.stop();
             tts.shutdown();
         }
+        cloud.release();
         session.release();
         emit(null, null);
         super.onDestroy();
@@ -279,7 +293,7 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
         tts.setSpeechRate(rate);
         boolean set = false;
         try {
-            if (!voiceName.isEmpty() && tts.getVoices() != null) {
+            if (!voiceName.isEmpty() && !voiceName.startsWith(CLOUD_PREFIX) && tts.getVoices() != null) {
                 for (Voice v : tts.getVoices()) {
                     if (v.getName().equals(voiceName)) {
                         set = tts.setVoice(v) == TextToSpeech.SUCCESS;
@@ -297,15 +311,31 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
         return gen + ":" + part;
     }
 
+    private boolean useCloud() {
+        return voiceName.startsWith(CLOUD_PREFIX) && android.os.SystemClock.elapsedRealtime() >= cloudDownUntil;
+    }
+
+    private String cloudUrl(String text) {
+        return ttsUrl + "?voice=" + android.net.Uri.encode(voiceName.substring(CLOUD_PREFIX.length())) + "&text=" + android.net.Uri.encode(text);
+    }
+
     /** 현재 문장을 처음부터 읽는다. 아주 긴 문장은 나눠서 이어 읽는다. */
     private void speakCurrent() {
         gen++;
+        cloud.stop();
+        if (texts.isEmpty()) return;
+        if (useCloud()) {
+            parts = split(texts.get(index), CLOUD_PART);
+            part = 0;
+            speakPart();
+            return;
+        }
         if (!ttsReady) {
             speakWhenReady = true;
             return;
         }
-        if (texts.isEmpty()) return;
-        parts = split(texts.get(index));
+        tts.stop();
+        parts = split(texts.get(index), MAX_PART);
         part = 0;
         speakPart();
     }
@@ -315,11 +345,55 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
             advance();
             return;
         }
+        final String id = currentId();
+        if (useCloud()) {
+            String text = parts.get(part);
+            if (!SPEAKABLE.matcher(text).find()) { // 기호뿐인 조각은 건너뛴다
+                main.post(new Runnable() { @Override public void run() { onPartDone(id); } });
+                return;
+            }
+            cloud.play(cloudUrl(text), rate,
+                    new Runnable() { @Override public void run() { onPartDone(id); } },
+                    new Runnable() { @Override public void run() { onCloudError(id); } });
+            String upcoming = upcomingPart();
+            if (upcoming != null) cloud.preload(cloudUrl(upcoming));
+            return;
+        }
+        if (!ttsReady) { // 온라인 목소리로 읽다가 기기 목소리로 넘어온 직후
+            speakWhenReady = true;
+            return;
+        }
         Bundle params = new Bundle();
         params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC);
-        if (tts.speak(parts.get(part), TextToSpeech.QUEUE_FLUSH, params, currentId()) != TextToSpeech.SUCCESS) {
+        if (tts.speak(parts.get(part), TextToSpeech.QUEUE_FLUSH, params, id) != TextToSpeech.SUCCESS) {
             fail("음성 엔진이 응답하지 않습니다. 잠시 뒤 다시 시도해 주세요.");
         }
+    }
+
+    /** 다음에 읽을 조각 (미리 받아 두기용). 기호뿐인 문장은 건너뛰고 찾는다. */
+    private String upcomingPart() {
+        if (part + 1 < parts.size()) return parts.get(part + 1);
+        if (loopOne) return parts.isEmpty() ? null : parts.get(0);
+        int nextIndex = index;
+        for (int tries = 0; tries < 5; tries++) {
+            nextIndex++;
+            if (nextIndex >= texts.size()) {
+                if (repeat != 0 && round >= repeat) return null;
+                nextIndex = 0;
+            }
+            List<String> p = split(texts.get(nextIndex), CLOUD_PART);
+            if (!p.isEmpty() && SPEAKABLE.matcher(p.get(0)).find()) return p.get(0);
+        }
+        return null;
+    }
+
+    /** 온라인 목소리를 받지 못함 → 한동안 기기 목소리로 대신 읽는다. */
+    private void onCloudError(String id) {
+        if (state != PLAYING || !id.equals(currentId())) return;
+        cloudDownUntil = android.os.SystemClock.elapsedRealtime() + CLOUD_RETRY_MS;
+        emit(null, "온라인 AI 목소리에 연결하지 못해, 잠시 폰 목소리로 읽습니다.");
+        applyVoiceAndRate();
+        speakCurrent();
     }
 
     private void onPartDone(String id) {
@@ -329,11 +403,15 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
     }
 
     static List<String> split(String text) {
+        return split(text, MAX_PART);
+    }
+
+    static List<String> split(String text, int max) {
         List<String> out = new ArrayList<>();
         String rest = text == null ? "" : text.trim();
-        while (rest.length() > MAX_PART) {
-            int cut = rest.lastIndexOf(' ', MAX_PART);
-            if (cut < MAX_PART / 2) cut = MAX_PART;
+        while (rest.length() > max) {
+            int cut = rest.lastIndexOf(' ', max);
+            if (cut < max / 2) cut = max;
             out.add(rest.substring(0, cut));
             rest = rest.substring(cut).trim();
         }
@@ -369,6 +447,7 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
         gen++;
         speakWhenReady = false;
         if (ttsReady) tts.stop();
+        cloud.stop();
         state = PAUSED;
         resumeOnGain = keepForResume;
         if (wakeLock.isHeld()) wakeLock.release();
@@ -386,6 +465,7 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
         gen++;
         speakWhenReady = false;
         if (ttsReady) tts.stop();
+        cloud.stop();
         state = IDLE;
         index = 0;
         round = 1;
@@ -427,6 +507,7 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
         if (state == PLAYING) {
             gen++;
             if (ttsReady) tts.stop();
+        cloud.stop();
             state = PAUSED;
             if (wakeLock.isHeld()) wakeLock.release();
         }

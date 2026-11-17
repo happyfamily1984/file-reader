@@ -21,6 +21,7 @@
     "jszip": "^3.10.2",
     "linkedom": "^0.18.15",
     "mammoth": "^1.13.0",
+    "msedge-tts": "^2.1.1",
     "pdfjs-dist": "^6.5.438",
     "tesseract.js": "^7.0.0",
     "tesseract.js-core": "^7.0.0"

@@ -103,8 +103,15 @@ player.onchange = (ev) => {
   if (playing && !wake && !isNative) navigator.wakeLock?.request('screen').then((w) => { wake = w; w.onrelease = () => (wake = null); }).catch(() => {});
   if (!playing && wake) wake.release().catch(() => {});
 };
-player.onerror = (code) => status(code === 'not-allowed'
-  ? '재생 버튼을 눌러 주세요.' : `음성 재생 중 문제가 생겼습니다 (${code}). 다른 목소리를 골라 보세요.`, true);
+player.onerror = (code) => {
+  const known = {
+    'not-allowed': '재생 버튼을 눌러 주세요.',
+    cloud: '온라인 AI 목소리에 연결하지 못해, 잠시 폰 목소리로 읽습니다.',
+    'no-voice': '이 기기에는 대신 읽을 목소리가 없습니다. 인터넷 연결을 확인해 주세요.',
+  };
+  // 앱의 재생 서비스는 안내 문장을 그대로 보낸다.
+  status(known[code] || (/\s/.test(code) ? code : `음성 재생 중 문제가 생겼습니다 (${code}). 다른 목소리를 골라 보세요.`), true);
+};
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') player.onchange(); });
 
 // ── 재생 조작 ───────────────────────────────────────
@@ -124,11 +131,6 @@ document.addEventListener('keydown', (e) => {
 const MORE_VOICES = '__more__';
 function fillVoices() {
   const voices = listVoices(), sel = $('voice'), saved = store.get('voice', '');
-  if (!voices.length) {
-    sel.replaceChildren(new Option('기기 기본 목소리', ''));
-    if (isNative) sel.append(new Option('＋ 목소리 더 받기 (기기 설정)…', MORE_VOICES));
-    return;
-  }
   const names = new Intl.DisplayNames(['ko'], { type: 'language' });
   const groups = new Map();
   for (const v of voices) {
@@ -136,7 +138,7 @@ function fillVoices() {
     let label = lang;
     try { label = names.of(lang) || lang; } catch { /* 알 수 없는 언어 코드 */ }
     if (!groups.has(label)) groups.set(label, Object.assign(document.createElement('optgroup'), { label }));
-    groups.get(label).append(new Option(v.name.replace(/^Microsoft | Online \(Natural\).*$/g, ''), v.voiceURI));
+    groups.get(label).append(new Option(v.cloud ? v.name : v.name.replace(/^Microsoft | Online \(Natural\).*$/g, ''), v.voiceURI));
   }
   sel.replaceChildren(...groups.values());
   if (isNative) sel.append(new Option('＋ 목소리 더 받기 (기기 설정)…', MORE_VOICES));
@@ -146,6 +148,7 @@ function fillVoices() {
 }
 if (player.supported) {
   fillVoices();
+  $('voice').title = '"AI 온라인"은 인터넷으로 받아 오는 자연스러운 목소리이고, 나머지는 기기에 들어 있는 목소리입니다.';
   if (isNative) addEventListener('rfmvoices', fillVoices); // 앱의 음성 엔진이 준비되면 목록을 다시 채운다
   else speechSynthesis.addEventListener?.('voiceschanged', fillVoices);
 } else status('이 브라우저는 음성 읽기를 지원하지 않습니다. 크롬, 엣지, 사파리에서 열어 주세요.', true);

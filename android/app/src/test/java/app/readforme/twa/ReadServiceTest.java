@@ -37,6 +37,25 @@ public class ReadServiceTest {
     private final List<String> states = new ArrayList<>();
     private Context context;
 
+    /** 가짜 온라인 재생기: 받은 주소를 기록하고, 시키는 대로 끝내거나 실패한다. */
+    static class FakeCloud implements CloudAudio {
+        final List<String> played = new ArrayList<>(), preloaded = new ArrayList<>();
+        Runnable done, error;
+        boolean auto = true, broken = false;
+        int stops;
+        @Override public void play(String url, float speed, Runnable onDone, Runnable onError) {
+            played.add(java.net.URLDecoder.decode(url.substring(url.indexOf("?") + 1)) + "@" + speed);
+            done = onDone;
+            error = onError;
+            if (broken) new android.os.Handler(Looper.getMainLooper()).post(onError);
+            else if (auto) new android.os.Handler(Looper.getMainLooper()).post(onDone);
+        }
+        @Override public void preload(String url) { preloaded.add(java.net.URLDecoder.decode(url.substring(url.indexOf("&text=") + 6))); }
+        @Override public void stop() { stops++; }
+        @Override public void release() { }
+    }
+    private FakeCloud cloud;
+
     @Before
     public void setUp() {
         context = ApplicationProvider.getApplicationContext();
@@ -46,6 +65,11 @@ public class ReadServiceTest {
         ReadService.loopOne = false;
         ReadService.rate = 1f;
         ReadService.voiceName = "";
+        ReadService.cloudDownUntil = 0;
+        cloud = new FakeCloud();
+        ReadService.cloudFactory = new CloudAudio.Factory() {
+            @Override public CloudAudio create(Context c) { return cloud; }
+        };
         ReadService.listener = new ReadService.Listener() {
             @Override public void onState(String json) { states.add(json); }
             @Override public void onVoices() { }
@@ -182,6 +206,52 @@ public class ReadServiceTest {
     public void mainScreenStarts() {
         MainActivity activity = Robolectric.buildActivity(MainActivity.class).setup().get();
         assertNotNull(activity);
+    }
+
+    @Test
+    public void onlineVoiceReadsThroughServerAndPreloadsNext() {
+        ReadService.voiceName = "cloud:ko-KR-SunHiNeural";
+        ReadService.rate = 1.5f;
+        ReadService.setDoc("제목", Arrays.asList("하나.", "...", "둘 & 셋?"), 0);
+        command(ReadService.ACTION_PLAY);
+        shadowOf(Looper.getMainLooper()).idle();
+        assertEquals(Arrays.asList("voice=ko-KR-SunHiNeural&text=하나.@1.5", "voice=ko-KR-SunHiNeural&text=둘 & 셋?@1.5"), cloud.played);
+        assertTrue("기기 목소리는 쓰지 않는다", shadowOf(serviceTts()).getSpokenTextList().isEmpty());
+        assertEquals("다음 문장을 미리 받는다", "둘 & 셋?", cloud.preloaded.get(cloud.preloaded.size() - 1));
+        assertEquals(ReadService.IDLE, ReadService.state);
+    }
+
+    @Test
+    public void onlineVoiceFailureFallsBackToDeviceVoice() {
+        ReadService.voiceName = "cloud:ko-KR-InJoonNeural";
+        cloud.broken = true;
+        ReadService.setDoc("제목", Arrays.asList("하나.", "둘."), 0);
+        command(ReadService.ACTION_PLAY);
+        shadowOf(Looper.getMainLooper()).idle();
+        assertEquals("한 번만 시도하고 한동안 기기 목소리를 쓴다", 1, cloud.played.size());
+        assertEquals(Arrays.asList("하나.", "둘."), shadowOf(serviceTts()).getSpokenTextList());
+        boolean told = false;
+        for (String st : states) told |= st.contains("폰 목소리로 읽습니다");
+        assertTrue("화면에 알린다", told);
+        assertEquals(ReadService.IDLE, ReadService.state);
+    }
+
+    @Test
+    public void pausingOnlineVoiceStopsAudioAndKeepsPosition() {
+        ReadService.voiceName = "cloud:ko-KR-SunHiNeural";
+        cloud.auto = false;
+        ReadService.setDoc("제목", Arrays.asList("하나.", "둘."), 0);
+        command(ReadService.ACTION_PLAY);
+        cloud.done.run(); // 첫 문장 끝
+        assertEquals(1, ReadService.index);
+        int before = cloud.stops;
+        service.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS);
+        assertEquals(ReadService.PAUSED, ReadService.state);
+        assertTrue(cloud.stops > before);
+        cloud.done.run(); // 멈춘 뒤에 뒤늦게 온 완료 신호는 무시한다
+        assertEquals(1, ReadService.index);
+        command(ReadService.ACTION_PLAY);
+        assertEquals("voice=ko-KR-SunHiNeural&text=둘.@1.0", cloud.played.get(cloud.played.size() - 1));
     }
 
     @Test

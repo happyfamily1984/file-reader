@@ -18,6 +18,26 @@ export function splitLong(text, max = 160) {
   return parts.filter((p) => SPEAKABLE.test(p));
 }
 
+// ── 온라인 AI 목소리 ────────────────────────────────
+// 서버(/api/tts)가 Microsoft Edge 의 온라인 음성으로 MP3 를 만들어 준다. 연결이 안 되면 기기 목소리로 대신 읽는다.
+// 목록은 api/tts.js 의 VOICES 와 맞춘다.
+const cloudVoice = (id, name, lang) => ({ name: `${name} (AI 온라인)`, lang, voiceURI: 'cloud:' + id, cloud: id });
+export const CLOUD_VOICES = [
+  cloudVoice('ko-KR-SunHiNeural', '선희 · 여성', 'ko-KR'),
+  cloudVoice('ko-KR-InJoonNeural', '인준 · 남성', 'ko-KR'),
+  cloudVoice('ko-KR-HyunsuMultilingualNeural', '현수 · 남성', 'ko-KR'),
+  cloudVoice('en-US-AriaNeural', 'Aria · 여성', 'en-US'),
+  cloudVoice('en-US-JennyNeural', 'Jenny · 여성', 'en-US'),
+  cloudVoice('en-US-GuyNeural', 'Guy · 남성', 'en-US'),
+  cloudVoice('ja-JP-NanamiNeural', 'Nanami · 여성', 'ja-JP'),
+  cloudVoice('ja-JP-KeitaNeural', 'Keita · 남성', 'ja-JP'),
+  cloudVoice('zh-CN-XiaoxiaoNeural', 'Xiaoxiao · 여성', 'zh-CN'),
+  cloudVoice('zh-CN-YunxiNeural', 'Yunxi · 남성', 'zh-CN'),
+];
+export const CLOUD_PART = 300; // 온라인 음성은 한 번에 이 길이까지 보낸다
+const CLOUD_RETRY_MS = 60000; // 연결에 실패하면 이 시간 동안은 기기 목소리로 읽는다
+export const cloudUrl = (voice, text) => new URL(`api/tts?voice=${voice.cloud}&text=${encodeURIComponent(text)}`, document.baseURI).href;
+
 export class Player {
   chunks = [];
   i = 0;
@@ -31,8 +51,11 @@ export class Player {
   onerror = () => {};
   #gen = 0;
   #utter = null; // 재생 중 GC 되지 않도록 참조 유지
+  #audio = null; // 온라인 목소리용. 아이폰은 사용자가 누른 뒤 만든 요소만 재생하므로 하나를 계속 쓴다.
+  #cloudDownUntil = 0;
 
-  get supported() { return !!synth; }
+  get supported() { return !!synth || typeof Audio !== 'undefined'; }
+  get #useCloud() { return !!this.voice?.cloud && Date.now() >= this.#cloudDownUntil; }
 
   load(chunks, index = 0) {
     this.#halt();
@@ -44,7 +67,7 @@ export class Player {
   }
 
   play() {
-    if (!synth || !this.chunks.length) return;
+    if (!this.supported || !this.chunks.length) return;
     this.state = 'playing';
     this.onchange();
     this.#speak();
@@ -83,18 +106,47 @@ export class Player {
   #halt() {
     this.#gen++;
     synth?.cancel();
+    this.#audio?.pause();
+  }
+
+  // 온라인 목소리로 한 조각을 읽는다. upcoming 은 다음에 읽을 조각으로, 미리 받아 두어 문장 사이가 끊기지 않게 한다.
+  #playCloud(text, gen, done, upcoming) {
+    const a = (this.#audio ??= new Audio());
+    const failed = () => {
+      if (gen !== this.#gen) return;
+      this.#cloudDownUntil = Date.now() + CLOUD_RETRY_MS;
+      this.onerror('cloud');
+      this.#speak(); // 같은 문장을 기기 목소리로 다시
+    };
+    a.onended = () => { if (gen === this.#gen) done(); };
+    a.onerror = failed;
+    a.src = cloudUrl(this.voice, text);
+    a.defaultPlaybackRate = a.playbackRate = this.rate;
+    a.play().catch((e) => {
+      if (gen !== this.#gen || e.name === 'AbortError') return;
+      if (e.name === 'NotAllowedError') { this.pause(); this.onerror('not-allowed'); } else failed();
+    });
+    if (upcoming) fetch(cloudUrl(this.voice, upcoming)).catch(() => {}); // 브라우저 저장소에 미리 받아 둔다
   }
 
   #speak() {
     const gen = ++this.#gen;
     const chunk = this.chunks[this.i];
-    const parts = splitLong(chunk.say || chunk.text);
+    const cloud = this.#useCloud;
+    const parts = splitLong(chunk.say || chunk.text, cloud ? CLOUD_PART : 160);
     let p = 0;
     const next = () => {
       if (gen !== this.#gen) return;
       if (p >= parts.length) return this.#advance();
+      if (cloud) {
+        const after = this.loopOne ? this.chunks[this.i] : this.chunks[this.i + 1];
+        const upcoming = parts[p + 1] ?? (after ? splitLong(after.say || after.text, CLOUD_PART)[0] : null);
+        return this.#playCloud(parts[p++], gen, next, upcoming);
+      }
+      if (!synth) { this.pause(); return this.onerror('no-voice'); }
       const u = new SpeechSynthesisUtterance(parts[p++]);
-      if (this.voice) { u.voice = this.voice; u.lang = this.voice.lang; } else u.lang = 'ko-KR';
+      // 온라인 목소리 대신 읽을 때는 기기가 그 언어의 기본 목소리를 고르게 둔다.
+      if (this.voice && !this.voice.cloud) { u.voice = this.voice; u.lang = this.voice.lang; } else u.lang = this.voice?.lang || 'ko-KR';
       u.rate = this.rate;
       u.onend = next;
       u.onerror = (e) => {
@@ -105,10 +157,12 @@ export class Player {
       this.#utter = u;
       synth.speak(u);
     };
-    if (synth.speaking || synth.pending) {
+    this.#audio?.pause();
+    if (synth && (synth.speaking || synth.pending)) {
       synth.cancel();
       setTimeout(next, 80); // cancel 직후 speak 가 무시되는 브라우저 대응
-    } else setTimeout(next, 0);
+    } else if (cloud) next(); // 누른 직후에 바로 재생을 시작해야 브라우저가 소리를 허락한다
+    else setTimeout(next, 0);
   }
 
   #advance() {
@@ -184,18 +238,23 @@ class NativePlayer extends Player {
 
 export const createPlayer = () => (native ? new NativePlayer() : new Player());
 
+const voiceRank = (v) => (v.lang.startsWith('ko') ? 0 : v.lang.startsWith('en') ? 1 : 2);
+const byLang = (a, b) => voiceRank(a) - voiceRank(b) || a.lang.localeCompare(b.lang);
+
+// 온라인 AI 목소리를 앞에, 기기 목소리(연결이 안 될 때 대신 읽는 목소리)를 뒤에 둔다.
 export function listVoices() {
+  return [...CLOUD_VOICES, ...deviceVoices()].sort((a, b) => byLang(a, b) || !!b.cloud - !!a.cloud);
+}
+
+function deviceVoices() {
   if (native) {
-    const rank = (v) => (v.lang.startsWith('ko') ? 0 : v.lang.startsWith('en') ? 1 : 2);
     // 같은 언어 안에서는 품질이 높은 목소리를 앞에 둔다.
-    const list = JSON.parse(native.voices() || '[]').sort((a, b) => rank(a) - rank(b) || a.lang.localeCompare(b.lang)
-      || (b.quality || 0) - (a.quality || 0) || a.name.localeCompare(b.name));
+    const list = JSON.parse(native.voices() || '[]').sort((a, b) => byLang(a, b) || (b.quality || 0) - (a.quality || 0) || a.name.localeCompare(b.name));
     const count = {}; // 엔진이 주는 이름(ko-kr-x-ism-local 등)은 알아보기 어려워 번호를 붙인다
-    return list.map((v) => ({ ...v, name: `목소리 ${(count[v.lang] = (count[v.lang] || 0) + 1)}${v.online ? ' (온라인)' : ''}` }));
+    return list.map((v) => ({ ...v, name: `폰 목소리 ${(count[v.lang] = (count[v.lang] || 0) + 1)}${v.online ? ' (온라인)' : ''}` }));
   }
   if (!synth) return [];
-  const rank = (v) => (v.lang.startsWith('ko') ? 0 : v.lang.startsWith('en') ? 1 : 2);
-  return synth.getVoices().slice().sort((a, b) => rank(a) - rank(b) || a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
+  return synth.getVoices().slice().sort((a, b) => byLang(a, b) || a.name.localeCompare(b.name));
 }
 
 // 일반 글을 문단/문장 단위 조각으로 나눈다.
