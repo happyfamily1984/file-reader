@@ -1,5 +1,5 @@
-// 읽어줘 안드로이드 앱: 배포된 웹앱을 크롬 엔진으로 전체 화면에 띄우는 TWA(Trusted Web Activity).
-// 음성 읽기(Web Speech)가 일반 WebView 에서는 동작하지 않아 TWA 방식을 쓴다.
+// 읽어줘 안드로이드 앱: 배포된 웹앱을 웹뷰에 띄우고, 읽기는 앱의 재생 서비스(ReadService)가 맡는다.
+// 덕분에 화면이 꺼지거나 다른 앱을 써도 끊기지 않고, 알림창에서 조작할 수 있다.
 plugins {
     id 'com.android.application'
 }
@@ -9,14 +9,14 @@ def ksFile = System.getenv('READFORME_KEYSTORE')
 
 android {
     namespace 'app.readforme.twa'
-    compileSdk 36
+    compileSdk 35
 
     defaultConfig {
         applicationId 'app.readforme.twa'
         minSdk 24
         targetSdk 35
-        versionCode 3
-        versionName '1.0.2'
+        versionCode 4
+        versionName '1.1.0'
     }
     signingConfigs {
         release {
@@ -34,6 +34,17 @@ android {
             if (ksFile) signingConfig signingConfigs.release
         }
     }
+    testOptions {
+        unitTests.includeAndroidResources = true
+        unitTests.all {
+            // 시험용 안드로이드 런타임을 받을 저장소 (기본 저장소에 접속할 수 없는 환경용)
+            if (System.getenv('ROBOLECTRIC_REPO')) systemProperty 'robolectric.dependency.repo.url', System.getenv('ROBOLECTRIC_REPO')
+            if (System.getenv('HTTPS_PROXY_HOST')) {
+                systemProperty 'robolectric.dependency.proxy.host', System.getenv('HTTPS_PROXY_HOST')
+                systemProperty 'robolectric.dependency.proxy.port', System.getenv('HTTPS_PROXY_PORT')
+            }
+        }
+    }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -41,5 +52,10 @@ android {
 }
 
 dependencies {
-    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.7.4'
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.media:media:1.7.0'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.14.1'
+    testImplementation 'androidx.test:core:1.6.1'
 }

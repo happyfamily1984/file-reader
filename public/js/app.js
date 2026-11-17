@@ -1,4 +1,4 @@
-import { Player, listVoices, textToChunks, mdToPlain } from './tts.js';
+import { createPlayer, isNative, listVoices, textToChunks, mdToPlain } from './tts.js';
 import { fileToDoc, linkToDoc } from './extract.js';
 import * as bible from './bible.js';
 
@@ -7,7 +7,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('fr.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('fr.' + k, JSON.stringify(v)); } catch { /* 저장 공간 부족 등은 무시 */ } },
 };
-const player = new Player();
+const player = createPlayer();
 const PLAY = 'M7 4v16l14-8z', PAUSE = 'M6 4h4v16H6zM14 4h4v16h-4z';
 
 // ── 상태 표시 ───────────────────────────────────────
@@ -36,7 +36,7 @@ function showDoc(title, chunks, index = 0, autoplay = true) {
     return s;
   });
   $('body').replaceChildren(frag);
-  player.load(chunks, index);
+  player.load(chunks, index, title);
   const json = JSON.stringify({ title, chunks });
   if (json.length < 2_000_000) store.set('doc', { title, chunks }); else store.set('doc', null);
   if (autoplay) {
@@ -73,7 +73,7 @@ player.onchange = (ev) => {
     }
   } else if (el) el.classList.toggle('cur', player.state !== 'idle');
   if (n) store.set('pos', ev === 'end' ? 0 : player.i);
-  if (playing && !wake) navigator.wakeLock?.request('screen').then((w) => { wake = w; w.onrelease = () => (wake = null); }).catch(() => {});
+  if (playing && !wake && !isNative) navigator.wakeLock?.request('screen').then((w) => { wake = w; w.onrelease = () => (wake = null); }).catch(() => {});
   if (!playing && wake) wake.release().catch(() => {});
 };
 player.onerror = (code) => status(code === 'not-allowed'
@@ -116,7 +116,8 @@ function fillVoices() {
 }
 if (player.supported) {
   fillVoices();
-  speechSynthesis.addEventListener?.('voiceschanged', fillVoices);
+  if (isNative) addEventListener('rfmvoices', fillVoices); // 앱의 음성 엔진이 준비되면 목록을 다시 채운다
+  else speechSynthesis.addEventListener?.('voiceschanged', fillVoices);
 } else status('이 브라우저는 음성 읽기를 지원하지 않습니다. 크롬, 엣지, 사파리에서 열어 주세요.', true);
 
 $('voice').onchange = (e) => {
@@ -137,8 +138,8 @@ $('rate').oninput = (e) => setRate(+e.target.value, true);
 setRate(store.get('rate', 1));
 $('repeat').value = String(store.get('repeat', 1));
 player.repeat = +$('repeat').value;
-$('repeat').onchange = (e) => { player.repeat = +e.target.value; store.set('repeat', player.repeat); player.onchange(); };
-$('loop-one').onchange = (e) => { player.loopOne = e.target.checked; };
+$('repeat').onchange = (e) => { player.repeat = +e.target.value; store.set('repeat', player.repeat); player.sync(); player.onchange(); };
+$('loop-one').onchange = (e) => { player.loopOne = e.target.checked; player.sync(); };
 const setOpts = (open) => { $('opts').hidden = !open; $('opts-btn').setAttribute('aria-expanded', open); store.set('opts', open); };
 $('opts-btn').onclick = () => setOpts($('opts').hidden);
 setOpts(store.get('opts', true));
@@ -406,7 +407,7 @@ checkInbox(true);
 
 // ── 앱 설치 · 오프라인 ──────────────────────────────
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('서비스 워커 등록 실패', e));
-const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+const standalone = isNative || matchMedia('(display-mode: standalone)').matches || navigator.standalone;
 let installEvent = null;
 addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
@@ -424,7 +425,7 @@ $('install-btn').onclick = async () => {
 $('install-no').onclick = () => { $('install').hidden = true; store.set('noInstall', true); };
 // 안드로이드: 설치 파일(APK)도 받을 수 있게 안내한다. 설치 버튼은 브라우저가 허락할 때만 쓸 수 있다.
 if (/android/i.test(navigator.userAgent) && !standalone && !store.get('noInstall', false)) {
-  $('install-msg').textContent = '앱으로 설치해서 쓸 수 있습니다.';
+  $('install-msg').textContent = '앱(APK)을 설치하면 화면을 꺼도, 다른 앱을 써도 계속 읽어줍니다.';
   $('apk').hidden = false;
   $('install-btn').hidden = true;
   $('install').hidden = false;
@@ -438,10 +439,25 @@ if (ios && !standalone && !store.get('noInstall', false)) {
   $('install').hidden = false;
 }
 
+// ── 안드로이드 앱이 다른 앱에서 공유받은 글·파일 ────
+function takeNativeShare() {
+  const raw = window.ReadForMeNative?.takeShared();
+  if (!raw) return false;
+  const sh = JSON.parse(raw);
+  if (sh.data) {
+    const bytes = Uint8Array.from(atob(sh.data), (c) => c.charCodeAt(0));
+    openFile(new File([bytes], sh.name || 'file', { type: sh.type || '' }));
+  } else if (sh.text) openText(sh.text, sh.title);
+  return true;
+}
+addEventListener('rfmshare', takeNativeShare);
+
 // ── 시작: 공유로 받은 내용 또는 지난번에 읽던 글 ────
 const params = new URLSearchParams(location.search);
 const shared = [params.get('url'), params.get('text')].filter(Boolean).join(' ').trim();
-if (params.has('shared')) { // 다른 앱에서 공유한 파일 (서비스 워커가 받아 둔 것)
+if (takeNativeShare()) {
+  // 앱이 공유받은 내용을 열었다
+} else if (params.has('shared')) { // 다른 앱에서 공유한 파일 (서비스 워커가 받아 둔 것)
   history.replaceState(null, '', location.pathname);
   run(async () => {
     const cache = await caches.open('fr-share');

@@ -40,14 +40,20 @@ curl -X POST "https://<배포 주소>/api/inbox?id=<내 id>&title=제목" \
 
 ## 안드로이드 앱 (APK)
 
-`android/` 는 배포된 웹앱을 크롬 엔진으로 전체 화면에 띄우는 TWA(Trusted Web Activity) 프로젝트입니다. 음성 읽기가 일반 WebView 에서는 동작하지 않아 이 방식을 씁니다. 빌드된 파일은 `public/readforme.apk` 로 함께 배포됩니다.
+`android/` 는 배포된 웹앱을 웹뷰에 띄우고, 읽기는 앱 안의 재생 서비스(`ReadService`)가 맡는 안드로이드 앱입니다. 빌드된 파일은 `public/readforme.apk` 로 함께 배포됩니다.
+
+- **백그라운드 재생** — 화면을 끄거나 다른 앱을 써도 계속 읽습니다 (기기 음성 엔진 + 포그라운드 서비스).
+- **다른 앱과 소리 주고받기** — 읽기 시작하면 음악·영상 앱이 멈추고, 읽기가 끝나거나 정지하면 다시 재생됩니다. 다른 앱이 재생을 시작하면 읽기가 멈추고 위치를 기억합니다. 전화·알림음처럼 잠깐 끼어든 소리는 끝나면 이어서 읽습니다.
+- **알림창·잠금 화면 조작** — 이전/다음 문장, 재생/일시정지, 정지, 위치 막대(끌어서 이동). 블루투스·이어폰 버튼도 됩니다.
+- 웹 쪽은 `window.ReadForMeNative` 가 있으면 `public/js/tts.js` 의 `NativePlayer` 로 이 서비스를 조작합니다.
 
 ```bash
 cd android
 ANDROID_HOME=<SDK 경로> READFORME_KEYSTORE=<키 파일> READFORME_KEYSTORE_PASSWORD=<암호> gradle assembleRelease
+gradle testReleaseUnitTest   # 재생 서비스 자동 시험 (기기 불필요)
 ```
 
-- 서명 키는 저장소에 넣지 않습니다. 같은 키로 서명해야 기존 설치본 위에 업데이트되고, `public/.well-known/assetlinks.json` 의 지문과 맞아야 주소창 없이 전체 화면으로 열립니다.
+- 서명 키는 저장소에 넣지 않습니다. 같은 키로 서명해야 기존 설치본 위에 업데이트됩니다.
 - 배포 주소가 바뀌면 `android/app/src/main/res/values/strings.xml` 의 주소를 바꿔 다시 빌드해야 합니다.
 
 ## 구조

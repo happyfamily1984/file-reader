@@ -3,7 +3,12 @@ pluginManagement {
 }
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories { google(); mavenCentral() }
+    repositories {
+        google()
+        // MAVEN_MIRROR 를 주면 Maven Central 대신 그 저장소를 쓴다 (기본 저장소에 접속할 수 없는 환경용).
+        def mirror = System.getenv('MAVEN_MIRROR')
+        if (mirror) maven { url mirror } else mavenCentral()
+    }
 }
 rootProject.name = 'readforme'
 include ':app'

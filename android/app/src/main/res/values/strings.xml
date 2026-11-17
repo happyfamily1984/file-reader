@@ -3,6 +3,12 @@
     <string name="app_name">읽어줘</string>
     <string name="host" translatable="false">file-reader-xi.vercel.app</string>
     <string name="launch_url" translatable="false">https://file-reader-xi.vercel.app/</string>
-    <string name="asset_statements" translatable="false">[{\"relation\": [\"delegate_permission/common.handle_all_urls\"], \"target\": {\"namespace\": \"web\", \"site\": \"https://file-reader-xi.vercel.app\"}}]</string>
-    <string name="share_target" translatable="false">{\"action\": \"https://file-reader-xi.vercel.app/share\", \"method\": \"POST\", \"enctype\": \"multipart/form-data\", \"params\": {\"title\": \"title\", \"text\": \"text\", \"url\": \"url\", \"files\": [{\"name\": \"file\", \"accept\": [\"*/*\"]}]}}</string>
+    <string name="channel_reading">읽기 재생</string>
+    <string name="action_play">재생</string>
+    <string name="action_pause">일시정지</string>
+    <string name="action_prev">이전 문장</string>
+    <string name="action_next">다음 문장</string>
+    <string name="action_stop">정지</string>
+    <string name="pick_file">읽을 파일 선택</string>
+    <string name="share_failed">공유한 내용을 열지 못했습니다.</string>
 </resources>

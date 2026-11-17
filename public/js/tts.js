@@ -77,6 +77,9 @@ export class Player {
   // 목소리·속도를 바꾼 뒤 현재 문장을 새 설정으로 다시 읽는다.
   refresh() { if (this.state === 'playing') this.#speak(); }
 
+  // 설정을 재생기에 전달한다 (앱 전용 재생기에서만 의미가 있다).
+  sync() {}
+
   #halt() {
     this.#gen++;
     synth?.cancel();
@@ -125,7 +128,69 @@ export class Player {
   }
 }
 
+// ── 안드로이드 앱 전용 재생기 ───────────────────────
+// 앱(APK) 안에서는 화면이 꺼지거나 다른 앱을 써도 끊기지 않도록, 읽기를 앱의 재생 서비스에 맡긴다.
+// 서비스가 문장 넘김·반복·오디오 포커스·알림창 조작을 모두 처리하고, 여기서는 상태만 받아 화면에 반영한다.
+const native = window.ReadForMeNative || null;
+export const isNative = !!native;
+
+class NativePlayer extends Player {
+  title = '';
+  constructor() {
+    super();
+    window.__rfmState = (s) => {
+      this.#apply(s);
+      this.onchange(s.ev);
+      if (s.error) this.onerror(s.error);
+    };
+  }
+  get supported() { return true; }
+  #apply(s) {
+    this.state = s.state;
+    if (s.n === this.chunks.length) { this.i = s.i; this.round = s.round; }
+  }
+  sync() {
+    native.configure(JSON.stringify({ rate: this.rate, voice: this.voice?.voiceURI || '', repeat: this.repeat, loopOne: this.loopOne }));
+  }
+  load(chunks, index = 0, title = '') {
+    this.chunks = chunks;
+    this.title = title;
+    this.i = Math.min(Math.max(0, index), Math.max(0, chunks.length - 1));
+    this.round = 1;
+    this.state = 'idle';
+    this.sync();
+    // 같은 글을 이미 읽는 중이면 서비스가 위치와 상태를 그대로 유지한다.
+    native.load(JSON.stringify({ title, index: this.i, texts: chunks.map((c) => c.say || c.text) }));
+    this.#apply(JSON.parse(native.state()));
+    this.onchange();
+  }
+  play() {
+    if (!this.chunks.length) return;
+    this.sync();
+    this.state = 'playing';
+    this.onchange();
+    native.play();
+  }
+  pause() { if (this.state === 'playing') native.pause(); }
+  stop() { native.stop(); }
+  seek(index) {
+    if (!this.chunks.length) return;
+    this.i = Math.min(Math.max(0, index), this.chunks.length - 1);
+    this.onchange();
+    native.seek(this.i);
+  }
+  refresh() { this.sync(); }
+}
+
+export const createPlayer = () => (native ? new NativePlayer() : new Player());
+
 export function listVoices() {
+  if (native) {
+    const rank = (v) => (v.lang.startsWith('ko') ? 0 : v.lang.startsWith('en') ? 1 : 2);
+    const list = JSON.parse(native.voices() || '[]').sort((a, b) => rank(a) - rank(b) || a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
+    const count = {}; // 엔진이 주는 이름(ko-kr-x-ism-local 등)은 알아보기 어려워 번호를 붙인다
+    return list.map((v) => ({ ...v, name: `목소리 ${(count[v.lang] = (count[v.lang] || 0) + 1)}` }));
+  }
   if (!synth) return [];
   const rank = (v) => (v.lang.startsWith('ko') ? 0 : v.lang.startsWith('en') ? 1 : 2);
   return synth.getVoices().slice().sort((a, b) => rank(a) - rank(b) || a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
