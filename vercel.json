@@ -1,0 +1,5 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "public",
+  "functions": { "api/extract.js": { "maxDuration": 30 } }
+}

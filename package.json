@@ -1,0 +1,27 @@
+{
+  "name": "file-reader",
+  "version": "1.0.0",
+  "private": true,
+  "description": "파일·링크·성경(개역한글)을 읽어주는 TTS 웹앱",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/build.mjs && node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "@tesseract.js-data/eng": "^1.0.0",
+    "@tesseract.js-data/kor": "^1.0.0",
+    "cfb": "^1.2.2",
+    "jszip": "^3.10.2",
+    "linkedom": "^0.18.15",
+    "mammoth": "^1.13.0",
+    "pdfjs-dist": "^6.5.438",
+    "tesseract.js": "^7.0.0",
+    "tesseract.js-core": "^7.0.0"
+  }
+}
