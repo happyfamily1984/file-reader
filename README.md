@@ -6,6 +6,7 @@
 
 - **파일 읽기** — PDF(스캔본은 글자 인식), 한글(HWP·HWPX), 워드(DOC·DOCX), 파워포인트(PPT·PPTX), 엑셀(XLS·XLSX), EPUB, RTF, ODT, HTML, TXT·자막, 사진(JPG·PNG 등 글자 인식). 파일은 서버로 올라가지 않고 브라우저 안에서 처리됩니다.
 - **링크 읽기** — 웹페이지 주소를 넣으면 본문만 골라 읽습니다. 링크가 PDF 같은 파일이면 파일로 읽습니다.
+- **받은 글** — 앱마다 고유한 수신 주소가 있어, Claude 등 다른 곳에서 그 주소로 글(보고서)을 보내면 앱에 도착해 읽어줍니다. "도착하면 바로 읽기"를 켜 둘 수 있습니다.
 - **목소리 · 속도** — 기기에 설치된 목소리 중 선택, 0.5~3배속.
 - **반복** — 전체 2·3·5·10번 또는 계속 반복, 지금 문장만 반복.
 - **성경 개역한글판** — 낱말 검색(전체·구약·신약·고른 책) 후 구절을 골라 읽기, `요 3:16` · `시 23편` · `창세기 1장 1-5절` 같은 표기로 바로 읽기, 책·장·절 범위 읽기.
@@ -20,11 +21,26 @@ npm start        # http://localhost:3000
 
 ## 배포 (Vercel)
 
-저장소를 Vercel 에 연결하면 `vercel.json` 설정대로 배포됩니다. 정적 파일은 `public/`, 링크 본문 추출은 `api/extract.js` 서버리스 함수가 맡습니다.
+1. [vercel.com/new](https://vercel.com/new) 에서 이 저장소를 가져와 배포합니다. 설정은 `vercel.json` 에 들어 있어 바꿀 것이 없습니다.
+2. "받은 글" 기능을 쓰려면 프로젝트의 **Storage → Create Database → Blob** 으로 저장소를 만들어 프로젝트에 연결하고(`BLOB_READ_WRITE_TOKEN` 이 자동으로 추가됨) 다시 배포합니다.
+
+정적 파일은 `public/`, 링크 본문 추출은 `api/extract.js`, 받은 글 수신함은 `api/inbox.js` 서버리스 함수가 맡습니다.
+
+## 다른 곳에서 글 보내기
+
+앱의 "받은 글" 탭에 나오는 주소로 글을 POST 하면 됩니다. 주소에 들어 있는 `id` 가 열쇠이므로 남에게 알려주지 마세요.
+
+```bash
+curl -X POST "https://<배포 주소>/api/inbox?id=<내 id>&title=제목" \
+  -H "Content-Type: text/markdown; charset=utf-8" --data-binary @report.md
+```
+
+본문은 일반 글·마크다운·HTML, 또는 JSON `{"title": "...", "text": "..."}` 을 받습니다 (최대 1MB, 최근 30편 보관).
 
 ## 구조
 
 - `public/js/tts.js` 재생 엔진 · `extract.js`/`office.js` 파일 글 추출 · `bible.js` 성경 검색 · `app.js` 화면
+- `api/inbox.js` · `lib/store.js` 받은 글 수신함과 보관소
 - `public/bible/krv.json` 개역한글판 본문 (66권)
 - `scripts/build.mjs` 브라우저용 라이브러리를 `public/vendor/` 로 복사
 

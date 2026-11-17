@@ -153,3 +153,20 @@ export function textToChunks(text) {
   }
   return chunks;
 }
+
+// 마크다운 기호(#, **, 표, 링크 등)를 소리 내어 읽기 좋은 글로 바꾼다.
+export function mdToPlain(md) {
+  return md.replace(/\r\n?/g, '\n')
+    .replace(/^[ \t]*(```|~~~).*$/gm, '')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^[ \t]*\|?[ \t:|-]*-{3,}[ \t:|-]*\|?[ \t]*$/gm, '')
+    .replace(/^[ \t]*\|(.*)\|[ \t]*$/gm, (_, row) => row.split('|').map((c) => c.trim()).filter(Boolean).join(', '))
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '')
+    .replace(/^[ \t]*>+[ \t]?/gm, '')
+    .replace(/^[ \t]*([-*+]|\d+[.)])[ \t]+(\[[ xX]\][ \t]+)?/gm, '')
+    .replace(/(\*\*|__|~~)(?=\S)(.+?)(?<=\S)\1/g, '$2')
+    .replace(/(^|[\s(])([*_])(?=\S)([^*_\n]+?)(?<=\S)\2(?=[\s).,!?:;]|$)/gm, '$1$3')
+    .replace(/`([^`\n]+)`/g, '$1')
+    .replace(/<\/?[a-zA-Z][^>]*>/g, '');
+}

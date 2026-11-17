@@ -1,9 +1,10 @@
-// 로컬 실행용 서버: public/ 정적 파일 + /api/extract
+// 로컬 실행용 서버: public/ 정적 파일 + /api/extract, /api/inbox
 import { createServer } from 'node:http';
 import { createReadStream, statSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import extract from './api/extract.js';
+import inbox from './api/inbox.js';
 
 const pub = join(dirname(fileURLToPath(import.meta.url)), 'public');
 const types = {
@@ -15,6 +16,7 @@ const types = {
 createServer((req, res) => {
   const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   if (path === '/api/extract') return extract(req, res);
+  if (path === '/api/inbox') return inbox(req, res);
   let file = normalize(join(pub, path));
   if (!file.startsWith(pub)) { res.statusCode = 403; return res.end(); }
   try {

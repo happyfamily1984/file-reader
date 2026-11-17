@@ -16,6 +16,7 @@
     "@mozilla/readability": "^0.6.0",
     "@tesseract.js-data/eng": "^1.0.0",
     "@tesseract.js-data/kor": "^1.0.0",
+    "@vercel/blob": "^2.9.0",
     "cfb": "^1.2.2",
     "jszip": "^3.10.2",
     "linkedom": "^0.18.15",

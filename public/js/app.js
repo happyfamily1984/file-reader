@@ -1,4 +1,4 @@
-import { Player, listVoices, textToChunks } from './tts.js';
+import { Player, listVoices, textToChunks, mdToPlain } from './tts.js';
 import { fileToDoc, linkToDoc } from './extract.js';
 import * as bible from './bible.js';
 
@@ -153,16 +153,18 @@ function showTab(name) {
   for (const b of document.querySelectorAll('.tabs button')) b.setAttribute('aria-selected', b.dataset.tab === name);
   $('tab-doc').hidden = name !== 'doc';
   $('tab-bible').hidden = name !== 'bible';
+  $('tab-inbox').hidden = name !== 'inbox';
   store.set('tab', name);
   if (name === 'bible') initBible();
+  if (name === 'inbox') checkInbox();
 }
-document.querySelector('.tabs').onclick = (e) => { if (e.target.dataset.tab) showTab(e.target.dataset.tab); };
+document.querySelector('.tabs').onclick = (e) => { const t = e.target.closest('[data-tab]'); if (t) showTab(t.dataset.tab); };
 
 // ── 파일 · 링크 · 글 ────────────────────────────────
 const openFile = (file) => run(async () => {
   player.pause();
   const doc = await fileToDoc(file, status);
-  showDoc(doc.title, textToChunks(doc.text));
+  showDoc(doc.title, textToChunks(/\.(md|markdown)$/i.test(file.name) ? mdToPlain(doc.text) : doc.text));
 });
 const openLink = (url) => run(async () => {
   player.pause();
@@ -310,6 +312,98 @@ $('read-sel').onclick = () => run(async () => {
   readVerses(data, hits.filter((h) => picked.has(h.join('.')))); // 성경 순서대로
 });
 
+// ── 받은 글: 다른 곳(Claude 등)에서 보내온 글 ───────
+const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(18)), (b) => 'abcdefghijkmnpqrstuvwxyz23456789'[b % 32]).join('');
+let inboxId = store.get('inbox', '') || newId();
+store.set('inbox', inboxId);
+const inboxUrl = (extra = '') => new URL('api/inbox?id=' + inboxId + extra, document.baseURI).href;
+const seen = new Set(store.get('seen', []));
+let known = null, inboxItems = [], checking = false;
+$('auto-read').checked = store.get('autoRead', false);
+$('auto-read').onchange = (e) => store.set('autoRead', e.target.checked);
+
+function copy(text, done) {
+  (navigator.clipboard?.writeText(text) ?? Promise.reject()).then(() => status(done), () => prompt('아래 내용을 복사하세요', text));
+}
+function showAddr() { $('addr').textContent = inboxUrl(); }
+showAddr();
+$('copy-addr').onclick = () => copy(inboxUrl(), '주소를 복사했습니다.');
+$('copy-prompt').onclick = () => copy(`보고서(글)를 다 쓰면, 그 전체 내용을 아래 주소로 HTTP POST 로 보내줘.
+주소: ${inboxUrl()}
+- 본문에 글 전체를 그대로 넣고, 헤더는 Content-Type: text/markdown; charset=utf-8
+- 제목은 주소 뒤에 &title=제목 (URL 인코딩) 으로 붙여줘
+- 예: curl -X POST "${inboxUrl('&title=TITLE')}" -H "Content-Type: text/markdown; charset=utf-8" --data-binary @report.md
+- 응답에 "ok": true 가 오면 성공이야. 성공 여부를 알려줘.`, '지시문을 복사했습니다. Claude 대화창에 붙여넣으세요.');
+$('refresh').onclick = () => run(() => checkInbox());
+$('change-id').onclick = () => {
+  const v = prompt('다른 기기와 같은 수신함을 쓰려면 그 기기의 주소 끝부분(id= 뒤)을 넣으세요.\n비워 두고 확인을 누르면 새 주소를 만듭니다.', inboxId);
+  if (v === null) return;
+  const id = (/id=([\w-]+)/.exec(v)?.[1] || v).trim() || newId();
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(id)) return status('주소는 영문·숫자 16자 이상이어야 합니다.', true);
+  inboxId = id;
+  store.set('inbox', id);
+  seen.clear();
+  known = null;
+  showAddr();
+  checkInbox();
+};
+
+async function openInboxItem(it, autoplay = true) {
+  const res = await fetch(inboxUrl('&item=' + encodeURIComponent(it.item)));
+  const doc = await res.json();
+  if (!res.ok) throw new Error(doc.error || '글을 불러오지 못했습니다.');
+  showDoc(doc.title, textToChunks(mdToPlain(doc.text)), 0, autoplay);
+  markSeen([it]);
+}
+function markSeen(items) {
+  items.forEach((it) => seen.add(it.item));
+  store.set('seen', [...seen].slice(-200));
+  renderInbox();
+}
+function renderInbox() {
+  const fresh = inboxItems.filter((it) => !seen.has(it.item)).length;
+  $('badge').hidden = !fresh;
+  $('badge').textContent = fresh;
+  $('inbox-count').textContent = inboxItems.length ? `받은 글 ${inboxItems.length}편` : '받은 글 없음';
+  $('inbox-list').hidden = !inboxItems.length;
+  $('inbox-list').replaceChildren(...inboxItems.map((it) => {
+    const li = document.createElement('li');
+    li.className = seen.has(it.item) ? '' : 'new';
+    const open = Object.assign(document.createElement('button'), { type: 'button', className: 'open' });
+    open.append(Object.assign(document.createElement('b'), { textContent: it.title }),
+      Object.assign(document.createElement('small'), { textContent: new Date(it.at).toLocaleString('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }) }));
+    open.onclick = () => run(() => openInboxItem(it));
+    const del = Object.assign(document.createElement('button'), { type: 'button', className: 'del', textContent: '삭제' });
+    del.setAttribute('aria-label', it.title + ' 삭제');
+    del.onclick = () => run(async () => {
+      await fetch(inboxUrl('&item=' + encodeURIComponent(it.item)), { method: 'DELETE' });
+      await checkInbox();
+    });
+    li.append(open, del);
+    return li;
+  }));
+}
+let inboxOff = false;
+async function checkInbox(quiet) {
+  if (checking || (inboxOff && quiet)) return;
+  checking = true;
+  try {
+    const res = await fetch(inboxUrl());
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { inboxOff = true; throw new Error(data.error || '받은 글을 확인하지 못했습니다. (서버와 함께 배포해야 동작합니다)'); }
+    inboxOff = false;
+    inboxItems = data.items || [];
+    // 앱을 열어 둔 사이에 새로 도착한 글만 자동으로 읽는다 (목록은 최신순)
+    const arrived = known ? inboxItems.filter((it) => !known.has(it.item)) : [];
+    known = new Set(inboxItems.map((it) => it.item));
+    renderInbox();
+    if (arrived.length && $('auto-read').checked && player.state !== 'playing') await openInboxItem(arrived[0]);
+  } catch (e) { if (!quiet) status(e.message, true); } finally { checking = false; }
+}
+setInterval(() => { if (document.visibilityState === 'visible') checkInbox(true); }, 15000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkInbox(true); });
+checkInbox(true);
+
 // ── 시작: 공유로 받은 내용 또는 지난번에 읽던 글 ────
 const params = new URLSearchParams(location.search);
 const shared = [params.get('url'), params.get('text')].filter(Boolean).join(' ').trim();
@@ -320,5 +414,5 @@ if (shared) {
 } else {
   const doc = store.get('doc', null);
   if (doc?.chunks?.length) run(async () => showDoc(doc.title, doc.chunks, store.get('pos', 0), false));
-  if (store.get('tab', 'doc') === 'bible') showTab('bible');
+  if (store.get('tab', 'doc') !== 'doc') showTab(store.get('tab'));
 }
