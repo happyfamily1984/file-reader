@@ -150,10 +150,17 @@ if (player.supported) {
   else speechSynthesis.addEventListener?.('voiceschanged', fillVoices);
 } else status('이 브라우저는 음성 읽기를 지원하지 않습니다. 크롬, 엣지, 사파리에서 열어 주세요.', true);
 
+// 앱(APK)에서는 폰의 음성 설정을 열어 목소리를 더 받을 수 있다.
+function openVoiceSettings() {
+  if (window.ReadForMeNative?.openVoiceSettings) window.ReadForMeNative.openVoiceSettings();
+  else status('이 기능은 최신 앱에서 됩니다. APK를 새로 받아 설치하거나, 폰 설정에서 "글자 읽어주기(TTS)"를 찾아 주세요.', true);
+}
+$('more-voices').hidden = !isNative;
+$('more-voices').onclick = openVoiceSettings;
 $('voice').onchange = (e) => {
-  if (e.target.value === MORE_VOICES) { // 기기의 음성 설정을 열고, 고른 목소리는 그대로 둔다
+  if (e.target.value === MORE_VOICES) { // 고른 목소리는 그대로 둔다
     e.target.value = player.voice?.voiceURI || '';
-    window.ReadForMeNative.openVoiceSettings();
+    openVoiceSettings();
     return;
   }
   player.voice = listVoices().find((v) => v.voiceURI === e.target.value) || null;

@@ -158,3 +158,4 @@ body:not(.reading) #reader { display: none; }
 .opts .check { min-height: 38px; color: var(--ink); font-size: 14px; }
 @media (min-width: 640px) { .opts { grid-template-columns: minmax(0, 2fr) minmax(0, 1.6fr) minmax(0, 1fr) auto; } }
 @media (max-width: 380px) { .top h1 { font-size: 19px; } .logo { width: 24px; } .tabs button { padding: 8px 10px; font-size: 15px; } }
+.more-voices { grid-column: 1 / -1; min-height: 40px; font-size: 14px; border-radius: 12px; }
