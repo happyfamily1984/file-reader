@@ -1,8 +1,8 @@
 // 서비스 워커: 앱 설치·오프라인 사용·다른 앱에서 공유받기를 맡는다.
-const SHELL = 'fr-shell-v1';   // 화면 파일: 온라인이면 항상 최신, 오프라인이면 저장본
+const SHELL = 'fr-shell-v2';   // 화면 파일: 온라인이면 항상 최신, 오프라인이면 저장본
 const STATIC = 'fr-static-v1'; // 성경 본문·라이브러리: 한 번 받으면 저장본 사용
 const SHARE = 'fr-share';      // 공유로 받은 파일 임시 보관
-const SHELL_FILES = ['./', 'style.css', 'js/app.js', 'js/tts.js', 'js/extract.js', 'js/office.js', 'js/bible.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png'];
+const SHELL_FILES = ['./', 'style.css', 'js/app.js', 'js/tts.js', 'js/extract.js', 'js/office.js', 'js/bible.js', 'manifest.webmanifest', 'icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
