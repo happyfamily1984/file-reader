@@ -1,0 +1,45 @@
+// 읽어줘 안드로이드 앱: 배포된 웹앱을 크롬 엔진으로 전체 화면에 띄우는 TWA(Trusted Web Activity).
+// 음성 읽기(Web Speech)가 일반 WebView 에서는 동작하지 않아 TWA 방식을 쓴다.
+plugins {
+    id 'com.android.application'
+}
+
+// 서명 키는 저장소에 넣지 않는다. 빌드할 때 환경 변수로 넘긴다.
+def ksFile = System.getenv('READFORME_KEYSTORE')
+
+android {
+    namespace 'app.readforme.twa'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'app.readforme.twa'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+    }
+    signingConfigs {
+        release {
+            if (ksFile) {
+                storeFile file(ksFile)
+                storePassword System.getenv('READFORME_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('READFORME_KEY_ALIAS') ?: 'readforme'
+                keyPassword System.getenv('READFORME_KEYSTORE_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (ksFile) signingConfig signingConfigs.release
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.7.4'
+}

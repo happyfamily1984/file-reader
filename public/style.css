@@ -108,3 +108,4 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1
 .install { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--card); border: 1px solid var(--accent); border-radius: 14px; padding: 10px 12px; margin-bottom: 12px; font-size: 15px; }
 .install span { flex: 1; min-width: 12em; }
 @media (display-mode: standalone) { .install { display: none !important; } }
+a.btn { display: inline-flex; align-items: center; text-decoration: none; }

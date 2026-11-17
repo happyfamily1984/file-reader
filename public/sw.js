@@ -53,6 +53,6 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;
   if (e.request.method === 'POST' && url.pathname.endsWith('/share')) return e.respondWith(receiveShare(e.request));
-  if (e.request.method !== 'GET' || url.pathname.includes('/api/')) return;
+  if (e.request.method !== 'GET' || url.pathname.includes('/api/') || url.pathname.endsWith('.apk')) return;
   e.respondWith(/\/(vendor|bible)\//.test(url.pathname) ? cacheFirst(e.request) : networkFirst(e.request));
 });

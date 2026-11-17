@@ -38,6 +38,18 @@ curl -X POST "https://<배포 주소>/api/inbox?id=<내 id>&title=제목" \
 
 본문은 일반 글·마크다운·HTML, 또는 JSON `{"title": "...", "text": "..."}` 을 받습니다 (최대 1MB, 최근 30편 보관).
 
+## 안드로이드 앱 (APK)
+
+`android/` 는 배포된 웹앱을 크롬 엔진으로 전체 화면에 띄우는 TWA(Trusted Web Activity) 프로젝트입니다. 음성 읽기가 일반 WebView 에서는 동작하지 않아 이 방식을 씁니다. 빌드된 파일은 `public/readforme.apk` 로 함께 배포됩니다.
+
+```bash
+cd android
+ANDROID_HOME=<SDK 경로> READFORME_KEYSTORE=<키 파일> READFORME_KEYSTORE_PASSWORD=<암호> gradle assembleRelease
+```
+
+- 서명 키는 저장소에 넣지 않습니다. 같은 키로 서명해야 기존 설치본 위에 업데이트되고, `public/.well-known/assetlinks.json` 의 지문과 맞아야 주소창 없이 전체 화면으로 열립니다.
+- 배포 주소가 바뀌면 `android/app/src/main/res/values/strings.xml` 의 주소를 바꿔 다시 빌드해야 합니다.
+
 ## 구조
 
 - `public/js/tts.js` 재생 엔진 · `extract.js`/`office.js` 파일 글 추출 · `bible.js` 성경 검색 · `app.js` 화면

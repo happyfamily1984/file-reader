@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.readforme.twa",
+      "sha256_cert_fingerprints": ["F2:F9:E6:87:0C:3E:E5:42:2A:6D:81:3B:21:FD:47:B8:2C:8C:E2:A1:BE:9D:1F:2F:7C:E9:6D:FA:77:07:05:F1"]
+    }
+  }
+]

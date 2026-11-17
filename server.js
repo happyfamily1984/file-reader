@@ -10,7 +10,7 @@ const pub = join(dirname(fileURLToPath(import.meta.url)), 'public');
 const types = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json',
-  '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.gz': 'application/gzip', '.png': 'image/png', '.txt': 'text/plain; charset=utf-8',
+  '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.gz': 'application/gzip', '.png': 'image/png', '.apk': 'application/vnd.android.package-archive', '.txt': 'text/plain; charset=utf-8',
 };
 
 createServer((req, res) => {

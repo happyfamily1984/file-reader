@@ -422,6 +422,14 @@ $('install-btn').onclick = async () => {
   $('install').hidden = true;
 };
 $('install-no').onclick = () => { $('install').hidden = true; store.set('noInstall', true); };
+// 안드로이드: 설치 파일(APK)도 받을 수 있게 안내한다. 설치 버튼은 브라우저가 허락할 때만 쓸 수 있다.
+if (/android/i.test(navigator.userAgent) && !standalone && !store.get('noInstall', false)) {
+  $('install-msg').textContent = '앱으로 설치해서 쓸 수 있습니다.';
+  $('apk').hidden = false;
+  $('install-btn').hidden = true;
+  $('install').hidden = false;
+  addEventListener('beforeinstallprompt', () => { $('install-btn').hidden = false; });
+}
 // 아이폰·아이패드는 설치 버튼을 띄울 수 없어 방법을 안내한다.
 const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 if (ios && !standalone && !store.get('noInstall', false)) {
