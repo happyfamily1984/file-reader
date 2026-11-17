@@ -184,6 +184,25 @@ public class ReadServiceTest {
         assertNotNull(activity);
     }
 
+    @Test
+    public void backOnFirstScreenAsksBeforeExit() {
+        MainActivity activity = Robolectric.buildActivity(MainActivity.class).setup().get();
+        activity.onBackPressed();
+        android.app.AlertDialog dialog = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog();
+        assertNotNull("맨 처음 화면에서 뒤로 가기를 누르면 종료할지 물어야 한다", dialog);
+        assertTrue(dialog.isShowing());
+        assertFalse(activity.isFinishing());
+        dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();
+        shadowOf(Looper.getMainLooper()).idle();
+        assertTrue(activity.isFinishing());
+    }
+
+    @Test
+    public void voiceListIncludesOnlineVoices() throws Exception {
+        org.json.JSONArray arr = new org.json.JSONArray(ReadService.voicesJson);
+        for (int i = 0; i < arr.length(); i++) assertTrue(arr.getJSONObject(i).has("online"));
+    }
+
     private android.speech.tts.TextToSpeech serviceTts() {
         try {
             java.lang.reflect.Field f = ReadService.class.getDeclaredField("tts");

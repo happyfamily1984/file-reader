@@ -59,6 +59,7 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
     public static final String ACTION_SEEK = "app.readforme.SEEK";
     public static final String ACTION_CONFIG = "app.readforme.CONFIG";
     public static final String ACTION_WARM = "app.readforme.WARM";
+    public static final String ACTION_VOICES = "app.readforme.VOICES";
     public static final String EXTRA_INDEX = "index";
 
     static final int IDLE = 0, PLAYING = 1, PAUSED = 2;
@@ -183,6 +184,7 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
             case ACTION_PREV: seek(index - 1); break;
             case ACTION_SEEK: seek(intent.getIntExtra(EXTRA_INDEX, index)); break;
             case ACTION_CONFIG: applyVoiceAndRate(); if (state == PLAYING) speakCurrent(); break;
+            case ACTION_VOICES: if (ttsReady) publishVoices(); break;
             default: break; // ACTION_WARM: 음성 엔진만 미리 준비
         }
     }
@@ -255,12 +257,13 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
         try {
             if (tts.getVoices() != null) {
                 for (Voice v : tts.getVoices()) {
-                    if (v.isNetworkConnectionRequired()) continue;
                     if (v.getFeatures() != null && v.getFeatures().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)) continue;
                     JSONObject o = new JSONObject();
                     o.put("name", v.getName());
                     o.put("lang", v.getLocale().toLanguageTag());
                     o.put("voiceURI", v.getName());
+                    o.put("online", v.isNetworkConnectionRequired()); // 인터넷이 필요한 목소리 (대체로 더 자연스럽다)
+                    o.put("quality", v.getQuality());
                     arr.put(o);
                 }
             }

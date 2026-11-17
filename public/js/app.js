@@ -39,11 +39,38 @@ function showDoc(title, chunks, index = 0, autoplay = true) {
   player.load(chunks, index, title);
   const json = JSON.stringify({ title, chunks });
   if (json.length < 2_000_000) store.set('doc', { title, chunks }); else store.set('doc', null);
+  $('now').hidden = false;
+  $('now-title').textContent = title;
   if (autoplay) {
+    openReader();
     player.play();
-    $('reader').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 }
+
+// ── 화면 전환 (뒤로 가기) ───────────────────────────
+// 메뉴(탭) 화면과 읽기 화면을 브라우저 기록에 쌓아, 뒤로 가기를 누르면 바로 앞 화면으로 돌아간다.
+// 맨 처음 화면에서 뒤로 가기를 누르면 앱이 "종료할까요?"를 묻는다.
+let view = 'menu';
+history.scrollRestoration = 'manual'; // 화면을 바꿀 때 스크롤 위치는 직접 정한다
+function render(st) {
+  view = st?.view === 'reader' && player.chunks.length ? 'reader' : 'menu';
+  document.body.classList.toggle('reading', view === 'reader');
+  if (view === 'menu') {
+    setTab(st?.tab || store.get('tab', 'doc'));
+    window.scrollTo(0, 0);
+  } else {
+    const el = spans[player.i];
+    if (el && player.i > 0) el.scrollIntoView({ block: 'center' }); else window.scrollTo(0, 0);
+  }
+}
+function openReader() {
+  if (!player.chunks.length) return;
+  if (view !== 'reader') history.pushState({ view: 'reader' }, '');
+  render({ view: 'reader' });
+}
+addEventListener('popstate', (e) => render(e.state));
+$('now').onclick = openReader;
+$('back').onclick = () => history.back();
 
 $('body').addEventListener('click', (e) => {
   const s = e.target.closest('.s');
@@ -69,7 +96,7 @@ player.onchange = (ev) => {
       el.classList.add('cur');
       const r = el.getBoundingClientRect();
       const bottom = document.querySelector('.player').getBoundingClientRect().top;
-      if (r.top < 70 || r.bottom > bottom - 20) window.scrollTo({ top: window.scrollY + r.top - (bottom - 60) / 3, behavior: 'smooth' });
+      if (view === 'reader' && (r.top < 70 || r.bottom > bottom - 20)) window.scrollTo({ top: window.scrollY + r.top - (bottom - 60) / 3, behavior: 'smooth' });
     }
   } else if (el) el.classList.toggle('cur', player.state !== 'idle');
   if (n) store.set('pos', ev === 'end' ? 0 : player.i);
@@ -94,10 +121,12 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ── 설정: 목소리 · 속도 · 반복 ──────────────────────
+const MORE_VOICES = '__more__';
 function fillVoices() {
   const voices = listVoices(), sel = $('voice'), saved = store.get('voice', '');
   if (!voices.length) {
     sel.replaceChildren(new Option('기기 기본 목소리', ''));
+    if (isNative) sel.append(new Option('＋ 목소리 더 받기 (기기 설정)…', MORE_VOICES));
     return;
   }
   const names = new Intl.DisplayNames(['ko'], { type: 'language' });
@@ -110,6 +139,7 @@ function fillVoices() {
     groups.get(label).append(new Option(v.name.replace(/^Microsoft | Online \(Natural\).*$/g, ''), v.voiceURI));
   }
   sel.replaceChildren(...groups.values());
+  if (isNative) sel.append(new Option('＋ 목소리 더 받기 (기기 설정)…', MORE_VOICES));
   const pick = voices.find((v) => v.voiceURI === saved) || voices.find((v) => v.lang.startsWith('ko')) || voices.find((v) => v.default) || voices[0];
   sel.value = pick.voiceURI;
   player.voice = pick;
@@ -121,6 +151,11 @@ if (player.supported) {
 } else status('이 브라우저는 음성 읽기를 지원하지 않습니다. 크롬, 엣지, 사파리에서 열어 주세요.', true);
 
 $('voice').onchange = (e) => {
+  if (e.target.value === MORE_VOICES) { // 기기의 음성 설정을 열고, 고른 목소리는 그대로 둔다
+    e.target.value = player.voice?.voiceURI || '';
+    window.ReadForMeNative.openVoiceSettings();
+    return;
+  }
   player.voice = listVoices().find((v) => v.voiceURI === e.target.value) || null;
   store.set('voice', e.target.value);
   player.refresh();
@@ -150,7 +185,7 @@ $('font-up').onclick = () => setFs(fs + 2);
 $('font-down').onclick = () => setFs(fs - 2);
 
 // ── 탭 ──────────────────────────────────────────────
-function showTab(name) {
+function setTab(name) {
   for (const b of document.querySelectorAll('.tabs button')) b.setAttribute('aria-selected', b.dataset.tab === name);
   $('tab-doc').hidden = name !== 'doc';
   $('tab-bible').hidden = name !== 'bible';
@@ -158,6 +193,14 @@ function showTab(name) {
   store.set('tab', name);
   if (name === 'bible') initBible();
   if (name === 'inbox') checkInbox();
+}
+// 탭을 누르면 그 메뉴 화면으로 간다 (읽기 화면에서도). 같은 화면이면 기록을 쌓지 않는다.
+function showTab(name, push = true) {
+  const cur = history.state;
+  const st = { view: 'menu', tab: name };
+  if (!push) history.replaceState(st, '');
+  else if (view !== 'menu' || cur?.tab !== name) history.pushState(st, '');
+  render(st);
 }
 document.querySelector('.tabs').onclick = (e) => { const t = e.target.closest('[data-tab]'); if (t) showTab(t.dataset.tab); };
 
@@ -476,5 +519,6 @@ if (takeNativeShare()) {
   if (doc?.chunks?.length) run(async () => showDoc(doc.title, doc.chunks, store.get('pos', 0), false));
   const tab = params.get('tab') || store.get('tab', 'doc');
   if (params.has('tab')) history.replaceState(null, '', location.pathname);
-  if (['inbox', 'bible'].includes(tab)) showTab(tab);
+  if (history.state?.view) render(history.state); // 새로고침: 보던 화면 그대로
+  else showTab(['inbox', 'bible'].includes(tab) ? tab : 'doc', false);
 }

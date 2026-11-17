@@ -34,6 +34,7 @@
     <symbol id="i-swap" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="round" stroke-linejoin="round" d="M4 8h14l-3-3M20 16H6l3 3"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="round" stroke-linejoin="round" d="M20 11a8 8 0 0 0-14.500-4M4 4v4h4M4 13a8 8 0 0 0 14.500 4M20 20v-4h-4"/></symbol>
     <symbol id="i-sliders" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h10M18 17h2"/><circle cx="15" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="9" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.600" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/></symbol>
     <symbol id="i-flag" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.500" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 7.500V12l3 2"/></symbol>
   </defs>
 </svg>
@@ -123,18 +124,24 @@
     </div>
   </section>
 
+  <button type="button" id="now" class="card now" hidden>
+    <svg class="ic"><use href="#i-speaker"/></svg>
+    <span><small>읽던 글</small><b id="now-title"></b></span>
+    <span class="go">열기 ›</span>
+  </button>
+
   <p id="status" role="status" hidden></p>
 
   <article id="reader" class="card">
     <div class="reader-head">
-      <svg class="ic"><use href="#i-speaker"/></svg>
+      <button type="button" id="back" aria-label="이전 화면으로"><svg class="ic"><use href="#i-back"/></svg></button>
       <h2 id="title">읽을 글이 없습니다</h2>
       <div class="font">
         <button type="button" id="font-down" aria-label="글자 작게">가−</button>
         <button type="button" id="font-up" aria-label="글자 크게">가+</button>
       </div>
     </div>
-    <div id="body"><p class="empty">파일을 열거나, 링크나 글을 붙여넣거나, 성경 구절을 골라 보세요.<br>문장을 누르면 그 자리부터 읽습니다.</p></div>
+    <div id="body"></div>
   </article>
 </main>
 

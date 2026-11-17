@@ -121,8 +121,48 @@ public class MainActivity extends Activity implements ReadService.Listener {
 
     @Override
     public void onBackPressed() {
-        if (web.canGoBack()) web.goBack();
-        else moveTaskToBack(true); // 뒤로 가기로 나가도 읽기는 계속된다.
+        // 웹 화면이 쌓아 둔 기록(읽기 화면 → 메뉴 → 이전 메뉴)을 따라 한 화면씩 돌아간다.
+        if (web.canGoBack()) {
+            web.goBack();
+            return;
+        }
+        // 맨 처음 화면이면 종료할지 묻는다.
+        final boolean reading = ReadService.state == ReadService.PLAYING;
+        android.app.AlertDialog.Builder b = new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.app_name)
+                .setMessage(reading ? R.string.exit_message_reading : R.string.exit_message)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.exit, new android.content.DialogInterface.OnClickListener() {
+                    @Override public void onClick(android.content.DialogInterface d, int which) {
+                        if (ReadService.state != ReadService.IDLE) {
+                            try {
+                                ReadService.send(MainActivity.this, ReadService.ACTION_STOP);
+                            } catch (RuntimeException ignored) {
+                                // 서비스가 이미 없으면 할 일이 없다.
+                            }
+                        }
+                        finishAndRemoveTask();
+                    }
+                });
+        if (reading) {
+            b.setNeutralButton(R.string.exit_keep_reading, new android.content.DialogInterface.OnClickListener() {
+                @Override public void onClick(android.content.DialogInterface d, int which) {
+                    moveTaskToBack(true);
+                }
+            });
+        }
+        b.show();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 설정에서 목소리를 새로 받고 돌아왔을 수 있으니 목록을 다시 읽는다.
+        try {
+            ReadService.send(this, ReadService.ACTION_VOICES);
+        } catch (RuntimeException ignored) {
+            // 서비스를 시작할 수 없는 순간이면 다음 기회에 갱신된다.
+        }
     }
 
     // ── 다른 앱에서 공유받기 ──
@@ -257,6 +297,24 @@ public class MainActivity extends Activity implements ReadService.Listener {
                                 .setAction(ReadService.ACTION_SEEK).putExtra(ReadService.EXTRA_INDEX, index));
                     } catch (RuntimeException ignored) {
                         ReadService.index = Math.max(0, Math.min(index, Math.max(0, ReadService.texts.size() - 1)));
+                    }
+                }
+            });
+        }
+
+        /** 기기의 음성 출력 설정을 연다: 목소리 데이터를 더 받거나 음성 엔진을 바꿀 수 있다. */
+        @JavascriptInterface
+        public void openVoiceSettings() {
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    try {
+                        startActivity(new Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                    } catch (Exception e) {
+                        try {
+                            startActivity(new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                        } catch (Exception ignored) {
+                            Toast.makeText(MainActivity.this, R.string.voice_settings_failed, Toast.LENGTH_LONG).show();
+                        }
                     }
                 }
             });

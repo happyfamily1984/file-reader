@@ -11,4 +11,10 @@
     <string name="action_stop">정지</string>
     <string name="pick_file">읽을 파일 선택</string>
     <string name="share_failed">공유한 내용을 열지 못했습니다.</string>
+    <string name="exit_message">읽어줘를 종료할까요?</string>
+    <string name="exit_message_reading">읽는 중입니다. 읽기를 멈추고 종료할까요?</string>
+    <string name="exit">종료</string>
+    <string name="cancel">취소</string>
+    <string name="exit_keep_reading">계속 들으며 나가기</string>
+    <string name="voice_settings_failed">음성 설정을 열지 못했습니다. 기기 설정에서 \"글자 읽어주기(TTS)\"를 찾아 주세요.</string>
 </resources>

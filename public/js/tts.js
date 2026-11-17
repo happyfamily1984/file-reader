@@ -187,9 +187,11 @@ export const createPlayer = () => (native ? new NativePlayer() : new Player());
 export function listVoices() {
   if (native) {
     const rank = (v) => (v.lang.startsWith('ko') ? 0 : v.lang.startsWith('en') ? 1 : 2);
-    const list = JSON.parse(native.voices() || '[]').sort((a, b) => rank(a) - rank(b) || a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
+    // 같은 언어 안에서는 품질이 높은 목소리를 앞에 둔다.
+    const list = JSON.parse(native.voices() || '[]').sort((a, b) => rank(a) - rank(b) || a.lang.localeCompare(b.lang)
+      || (b.quality || 0) - (a.quality || 0) || a.name.localeCompare(b.name));
     const count = {}; // 엔진이 주는 이름(ko-kr-x-ism-local 등)은 알아보기 어려워 번호를 붙인다
-    return list.map((v) => ({ ...v, name: `목소리 ${(count[v.lang] = (count[v.lang] || 0) + 1)}` }));
+    return list.map((v) => ({ ...v, name: `목소리 ${(count[v.lang] = (count[v.lang] || 0) + 1)}${v.online ? ' (온라인)' : ''}` }));
   }
   if (!synth) return [];
   const rank = (v) => (v.lang.startsWith('ko') ? 0 : v.lang.startsWith('en') ? 1 : 2);
