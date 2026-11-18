@@ -60,6 +60,10 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
     public static final String ACTION_CONFIG = "app.readforme.CONFIG";
     public static final String ACTION_WARM = "app.readforme.WARM";
     public static final String ACTION_VOICES = "app.readforme.VOICES";
+    /** 받은 글 기다리기를 켜거나 끈다 (watchId 를 바꾼 뒤 보낸다). */
+    public static final String ACTION_WATCH = "app.readforme.WATCH";
+    public static final String ACTION_WATCH_OFF = "app.readforme.WATCH_OFF";
+    public static final String ACTION_POLL = "app.readforme.POLL";
     public static final String EXTRA_INDEX = "index";
 
     static final int IDLE = 0, PLAYING = 1, PAUSED = 2;
@@ -76,10 +80,52 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
     };
     static long cloudDownUntil = 0;
 
+    // ── 받은 글 기다리기: 새 글이 도착하면 화면이 꺼져 있어도 바로 읽는다 ──
+    private static final long POLL_MS = 30000;
+    /** 기다릴 수신함 id. 비어 있으면 기다리지 않는다. */
+    static String watchId = "";
+    /** 이미 본 글 이름들. null 이면 다음 확인 때 "지금 있는 글"을 기준으로 삼는다. */
+    static java.util.Set<String> known = null;
+    /** 도착했지만 아직 읽지 않은 글 [이름, 제목]. 읽는 중이면 끝난 뒤 이어서 읽는다. */
+    static final java.util.ArrayDeque<String[]> arrivals = new java.util.ArrayDeque<>();
+    /** 앱이 스스로 읽은 글 이름들 (화면에서 "읽음"으로 표시하는 데 쓴다). */
+    static final java.util.LinkedHashSet<String> autoPlayed = new java.util.LinkedHashSet<>();
+    /** 지금 실린 글이 받은 글이면 그 이름, 문단 시작 표시. 화면이 실은 글이면 null. */
+    /** 자동으로 읽기 시작한 새 글은 반복 설정과 상관없이 한 번만 읽는다. */
+    static boolean playOnce = false;
+    static String docItem = null;
+    static List<Boolean> paragraphStart = null;
+    static Fetcher fetcher = new Fetcher() {
+        @Override public String get(String url) throws Exception {
+            java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            try {
+                c.setConnectTimeout(10000);
+                c.setReadTimeout(15000);
+                if (c.getResponseCode() != 200) throw new java.io.IOException("HTTP " + c.getResponseCode());
+                java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                try (java.io.InputStream in = c.getInputStream()) {
+                    byte[] buf = new byte[16384];
+                    for (int n; (n = in.read(buf)) > 0; ) out.write(buf, 0, n);
+                }
+                return out.toString("UTF-8");
+            } finally {
+                c.disconnect();
+            }
+        }
+    };
+    static java.util.concurrent.Executor network = java.util.concurrent.Executors.newSingleThreadExecutor();
+
     /** 화면(웹뷰)에 상태를 알리는 통로. */
     public interface Listener {
         void onState(String json);
         void onVoices();
+        /** 앱이 스스로 새 글을 실었다 (받은 글 자동 읽기). 화면이 그 글을 가져가 보여 준다. */
+        void onDoc();
+    }
+
+    /** 서버에서 글자를 받아 오는 통로 (시험에서는 가짜로 바꾼다). */
+    interface Fetcher {
+        String get(String url) throws Exception;
     }
 
     // ── 프로세스 전체에서 유지되는 읽기 상태 ──
@@ -106,7 +152,12 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
     private PowerManager.WakeLock wakeLock;
     private Bitmap art;
     private CloudAudio cloud;
-    private String ttsUrl;
+    private String ttsUrl, inboxUrl;
+    private PowerManager.WakeLock watchLock;
+    private boolean polling, fetchingArrival;
+    private final Runnable pollTick = new Runnable() {
+        @Override public void run() { poll(); }
+    };
 
     // ── 화면에서 부르는 정적 진입점 ──
 
@@ -120,6 +171,25 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
         texts = newTexts;
         index = Math.max(0, Math.min(newIndex, Math.max(0, newTexts.size() - 1)));
         round = 1;
+        docItem = null;
+        paragraphStart = null;
+        playOnce = false;
+    }
+
+    /** 지금 실린 글 전체. 화면이 닫혀 있는 동안 앱이 스스로 실은 글을 화면이 가져갈 때 쓴다. */
+    static String currentJson() {
+        try {
+            JSONObject o = new JSONObject(stateJson(null, null));
+            o.put("title", title);
+            o.put("texts", new JSONArray(texts));
+            if (paragraphStart != null) o.put("np", new JSONArray(paragraphStart));
+            if (docItem != null) o.put("item", docItem);
+            o.put("played", new JSONArray(autoPlayed));
+            o.put("watching", !watchId.isEmpty());
+            return o.toString();
+        } catch (Exception e) {
+            return "{}";
+        }
     }
 
     static String stateJson(String event, String error) {
@@ -155,6 +225,9 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
         tts = new TextToSpeech(getApplicationContext(), this);
         cloud = cloudFactory.create(this);
         ttsUrl = getString(R.string.launch_url) + "api/tts";
+        inboxUrl = getString(R.string.launch_url) + "api/inbox";
+        watchLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "readforme:watching");
+        watchLock.setReferenceCounted(false);
 
         session = new MediaSessionCompat(this, "ReadForMe");
         session.setCallback(new MediaSessionCompat.Callback() {
@@ -198,6 +271,14 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
             case ACTION_SEEK: seek(intent.getIntExtra(EXTRA_INDEX, index)); break;
             case ACTION_CONFIG: applyVoiceAndRate(); if (state == PLAYING) speakCurrent(); break;
             case ACTION_VOICES: if (ttsReady) publishVoices(); break;
+            case ACTION_WATCH: applyWatch(); break;
+            case ACTION_WATCH_OFF:
+                watchId = "";
+                getSharedPreferences("watch", MODE_PRIVATE).edit().remove("id").apply();
+                applyWatch();
+                if (listener != null) listener.onDoc();
+                break;
+            case ACTION_POLL: poll(); break;
             default: break; // ACTION_WARM: 음성 엔진만 미리 준비
         }
     }
@@ -220,6 +301,8 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
             tts.shutdown();
         }
         cloud.release();
+        main.removeCallbacks(pollTick);
+        if (watchLock.isHeld()) watchLock.release();
         session.release();
         emit(null, null);
         super.onDestroy();
@@ -228,7 +311,7 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         // 최근 앱 목록에서 앱을 밀어 없앴을 때: 읽는 중이 아니면 서비스도 끝낸다.
-        if (state != PLAYING) {
+        if (state != PLAYING && watchId.isEmpty()) {
             stopForegroundCompat();
             stopSelf();
         }
@@ -373,12 +456,12 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
     /** 다음에 읽을 조각 (미리 받아 두기용). 기호뿐인 문장은 건너뛰고 찾는다. */
     private String upcomingPart() {
         if (part + 1 < parts.size()) return parts.get(part + 1);
-        if (loopOne) return parts.isEmpty() ? null : parts.get(0);
+        if (loopOne && !playOnce) return parts.isEmpty() ? null : parts.get(0);
         int nextIndex = index;
         for (int tries = 0; tries < 5; tries++) {
             nextIndex++;
             if (nextIndex >= texts.size()) {
-                if (repeat != 0 && round >= repeat) return null;
+                if (playOnce || (repeat != 0 && round >= repeat)) return null;
                 nextIndex = 0;
             }
             List<String> p = split(texts.get(nextIndex), CLOUD_PART);
@@ -474,9 +557,157 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
         unregisterNoisy();
         if (wakeLock.isHeld()) wakeLock.release();
         session.setActive(false);
-        stopForegroundCompat();
+        if (watchId.isEmpty()) stopForegroundCompat();
+        else showWaitingNotification(); // 계속 새 글을 기다린다
         emit(event, null);
-        if (stopService) stopSelf();
+        if (stopService && watchId.isEmpty()) stopSelf();
+        else if (stopService) main.post(new Runnable() { @Override public void run() { playNextArrival(); } });
+    }
+
+    // ── 받은 글 기다리기 ──
+
+    /** watchId 에 맞춰 기다리기를 시작하거나 끝낸다. */
+    private void applyWatch() {
+        main.removeCallbacks(pollTick);
+        if (watchId.isEmpty()) {
+            known = null;
+            arrivals.clear();
+            if (watchLock.isHeld()) watchLock.release();
+            if (state == IDLE) {
+                stopForegroundCompat();
+                stopSelf();
+            }
+            return;
+        }
+        // 화면이 꺼져도 30초마다 확인할 수 있게 CPU 를 깨워 둔다.
+        if (!watchLock.isHeld()) watchLock.acquire();
+        if (state == IDLE) showWaitingNotification();
+        poll();
+    }
+
+    /** 수신함을 확인한다. 새로 도착한 글이 있으면 읽을 차례에 넣는다. */
+    private void poll() {
+        main.removeCallbacks(pollTick);
+        if (watchId.isEmpty()) return;
+        main.postDelayed(pollTick, POLL_MS);
+        if (polling) return;
+        polling = true;
+        final String id = watchId;
+        network.execute(new Runnable() { @Override public void run() {
+            String body = null;
+            try {
+                body = fetcher.get(inboxUrl + "?id=" + android.net.Uri.encode(id));
+            } catch (Exception ignored) {
+                // 인터넷이 잠깐 안 되면 다음 차례에 다시 확인한다.
+            }
+            final String result = body;
+            main.post(new Runnable() { @Override public void run() {
+                polling = false;
+                if (result != null && id.equals(watchId)) onInboxList(result);
+            } });
+        } });
+    }
+
+    private void onInboxList(String json) {
+        List<String[]> items = new ArrayList<>();
+        try {
+            JSONArray arr = new JSONObject(json).getJSONArray("items"); // 최신순
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.getJSONObject(i);
+                items.add(new String[]{o.getString("item"), o.optString("title")});
+            }
+        } catch (Exception e) {
+            return;
+        }
+        if (known == null) { // 기다리기를 켠 시점에 이미 있던 글은 읽지 않는다
+            known = new java.util.HashSet<>();
+            for (String[] it : items) known.add(it[0]);
+            return;
+        }
+        for (int i = items.size() - 1; i >= 0; i--) { // 먼저 도착한 것부터
+            if (known.add(items.get(i)[0])) arrivals.add(items.get(i));
+        }
+        playNextArrival();
+    }
+
+    /** 읽는 중이 아니면, 도착해 있는 다음 글을 받아 와 읽기 시작한다. */
+    private void playNextArrival() {
+        if (state == PLAYING || fetchingArrival || arrivals.isEmpty() || watchId.isEmpty()) return;
+        final String[] item = arrivals.poll();
+        final String id = watchId;
+        fetchingArrival = true;
+        network.execute(new Runnable() { @Override public void run() {
+            String body = null;
+            try {
+                body = fetcher.get(inboxUrl + "?id=" + android.net.Uri.encode(id) + "&item=" + android.net.Uri.encode(item[0]));
+            } catch (Exception ignored) {
+                // 받지 못한 글은 건너뛴다 (화면의 받은 글 목록에는 그대로 남아 있다).
+            }
+            final String result = body;
+            main.post(new Runnable() { @Override public void run() {
+                fetchingArrival = false;
+                if (result != null && id.equals(watchId) && state != PLAYING) startArrival(item, result);
+                else if (result == null) playNextArrival();
+            } });
+        } });
+    }
+
+    private void startArrival(String[] item, String json) {
+        InboxText.Doc doc;
+        String docTitle;
+        try {
+            JSONObject o = new JSONObject(json);
+            docTitle = o.optString("title", item[1]);
+            doc = InboxText.toDoc(o.getString("text"));
+        } catch (Exception e) {
+            playNextArrival();
+            return;
+        }
+        if (doc.texts.isEmpty()) {
+            playNextArrival();
+            return;
+        }
+        setDoc(docTitle, doc.texts, 0);
+        docItem = item[0];
+        paragraphStart = doc.paragraphStart;
+        playOnce = true;
+        autoPlayed.add(item[0]);
+        while (autoPlayed.size() > 50) autoPlayed.remove(autoPlayed.iterator().next());
+        play();
+        if (listener != null) listener.onDoc();
+    }
+
+    private void showWaitingNotification() {
+        PendingIntent open = PendingIntent.getActivity(this, 0,
+                new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification n = new NotificationCompat.Builder(this, CHANNEL)
+                .setSmallIcon(R.drawable.ic_stat_reading)
+                .setContentTitle(getString(R.string.waiting_title))
+                .setContentText(getString(R.string.waiting_text))
+                .setContentIntent(open)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setShowWhen(false)
+                .addAction(R.drawable.ic_stop, getString(R.string.waiting_stop), action(ACTION_WATCH_OFF, 6))
+                .build();
+        post(n);
+    }
+
+    /** 알림을 띄운다. 처음이면 포그라운드 서비스로 올린다. */
+    private void post(Notification n) {
+        if (!foreground) {
+            try {
+                if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+                else startForeground(NOTIFICATION_ID, n);
+                foreground = true;
+            } catch (RuntimeException e) {
+                // 화면 밖에서 시작이 막힌 드문 경우: 알림만 띄우고 계속한다.
+                ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTIFICATION_ID, n);
+            }
+        } else {
+            ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTIFICATION_ID, n);
+        }
     }
 
     private void seek(int to) {
@@ -488,9 +719,9 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
     }
 
     private void advance() {
-        if (!loopOne) {
+        if (!loopOne || playOnce) {
             if (index < texts.size() - 1) index++;
-            else if (repeat == 0 || round < repeat) {
+            else if (!playOnce && (repeat == 0 || round < repeat)) {
                 round++;
                 index = 0;
             } else {
@@ -644,18 +875,7 @@ public class ReadService extends Service implements TextToSpeech.OnInitListener,
                 .setStyle(new MediaStyle().setMediaSession(session.getSessionToken()).setShowActionsInCompactView(0, 1, 2))
                 .build();
 
-        if (!foreground) {
-            try {
-                if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
-                else startForeground(NOTIFICATION_ID, n);
-                foreground = true;
-            } catch (RuntimeException e) {
-                // 화면 밖에서 시작이 막힌 드문 경우: 알림만 띄우고 계속한다.
-                ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTIFICATION_ID, n);
-            }
-        } else {
-            ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTIFICATION_ID, n);
-        }
+        post(n);
     }
 
     private void stopForegroundCompat() {

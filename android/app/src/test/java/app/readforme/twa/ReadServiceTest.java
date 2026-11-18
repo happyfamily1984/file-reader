@@ -55,6 +55,20 @@ public class ReadServiceTest {
         @Override public void release() { }
     }
     private FakeCloud cloud;
+    private final List<String[]> inbox = new ArrayList<>();
+    private boolean offline;
+    private int docsAdopted;
+
+    private void watch(String id) {
+        ReadService.watchId = id;
+        command(ReadService.ACTION_WATCH);
+        shadowOf(Looper.getMainLooper()).idle();
+    }
+
+    private void poll() {
+        command(ReadService.ACTION_POLL);
+        shadowOf(Looper.getMainLooper()).idle();
+    }
 
     @Before
     public void setUp() {
@@ -70,9 +84,37 @@ public class ReadServiceTest {
         ReadService.cloudFactory = new CloudAudio.Factory() {
             @Override public CloudAudio create(Context c) { return cloud; }
         };
+        ReadService.watchId = "";
+        ReadService.known = null;
+        ReadService.arrivals.clear();
+        ReadService.autoPlayed.clear();
+        ReadService.docItem = null;
+        ReadService.playOnce = false;
+        inbox.clear();
+        docsAdopted = 0;
+        ReadService.network = new java.util.concurrent.Executor() {
+            @Override public void execute(Runnable r) { r.run(); }
+        };
+        // 가짜 수신함: inbox 에 [이름, 제목, 본문] 을 최신순으로 넣어 두면 서버처럼 돌려준다.
+        ReadService.fetcher = new ReadService.Fetcher() {
+            @Override public String get(String url) throws Exception {
+                if (offline) throw new java.io.IOException("offline");
+                android.net.Uri u = android.net.Uri.parse(url);
+                String item = u.getQueryParameter("item");
+                org.json.JSONObject out = new org.json.JSONObject();
+                if (item == null) {
+                    org.json.JSONArray arr = new org.json.JSONArray();
+                    for (String[] it : inbox) arr.put(new org.json.JSONObject().put("item", it[0]).put("title", it[1]));
+                    return out.put("items", arr).toString();
+                }
+                for (String[] it : inbox) if (it[0].equals(item)) return out.put("title", it[1]).put("text", it[2]).toString();
+                throw new java.io.IOException("404");
+            }
+        };
         ReadService.listener = new ReadService.Listener() {
             @Override public void onState(String json) { states.add(json); }
             @Override public void onVoices() { }
+            @Override public void onDoc() { docsAdopted++; }
         };
         controller = Robolectric.buildService(ReadService.class).create();
         service = controller.get();
@@ -252,6 +294,75 @@ public class ReadServiceTest {
         assertEquals(1, ReadService.index);
         command(ReadService.ACTION_PLAY);
         assertEquals("voice=ko-KR-SunHiNeural&text=둘.@1.0", cloud.played.get(cloud.played.size() - 1));
+    }
+
+    @Test
+    public void newReportIsReadOnceInBackground() throws Exception {
+        inbox.add(new String[]{"1-a-old.json", "옛 글", "이미 있던 글."});
+        ReadService.repeat = 3; // 반복 설정이 있어도 새 글은 한 번만
+        watch("inboxid1234567890");
+        assertTrue("기다리는 동안 알림이 떠 있다", hasNotification());
+        assertEquals("켠 시점에 있던 글은 읽지 않는다", ReadService.IDLE, ReadService.state);
+        assertTrue(shadowOf(serviceTts()).getSpokenTextList().isEmpty());
+
+        inbox.add(0, new String[]{"2-b-new.json", "주간 보고서", "# 주간 보고서\n\n**매출**이 늘었습니다. 다음 주 계획입니다.\n\n| 항목 | 값 |\n|---|---|\n| 방문 | 120 |"});
+        poll();
+        assertEquals(Arrays.asList("주간 보고서", "매출이 늘었습니다.", "다음 주 계획입니다.", "항목, 값", "방문, 120"),
+                shadowOf(serviceTts()).getSpokenTextList());
+        assertEquals("끝까지 한 번 읽고 멈춘다", ReadService.IDLE, ReadService.state);
+        assertTrue(ReadService.autoPlayed.contains("2-b-new.json"));
+        assertEquals(1, docsAdopted);
+        assertTrue("읽고 난 뒤에도 계속 기다린다", hasNotification());
+
+        poll(); // 같은 글을 다시 읽지 않는다
+        assertEquals(5, shadowOf(serviceTts()).getSpokenTextList().size());
+        org.json.JSONObject cur = new org.json.JSONObject(ReadService.currentJson());
+        assertEquals("주간 보고서", cur.getString("title"));
+        assertTrue(cur.getBoolean("watching"));
+    }
+
+    @Test
+    public void reportArrivingWhileReadingWaitsItsTurn() {
+        watch("inboxid1234567890");
+        cloud.auto = false;
+        ReadService.voiceName = "cloud:ko-KR-SunHiNeural";
+        ReadService.setDoc("읽던 글", Arrays.asList("읽던 문장."), 0);
+        command(ReadService.ACTION_PLAY);
+        inbox.add(0, new String[]{"3-c-x.json", "새 보고", "새 보고 내용."});
+        poll();
+        assertEquals("읽던 글을 끊지 않는다", "읽던 글", ReadService.title);
+        assertEquals(ReadService.PLAYING, ReadService.state);
+        cloud.done.run(); // 읽던 글이 끝남
+        shadowOf(Looper.getMainLooper()).idle();
+        assertEquals("새 보고", ReadService.title);
+        assertEquals(ReadService.PLAYING, ReadService.state);
+    }
+
+    @Test
+    public void watchSurvivesNetworkErrorsAndCanBeTurnedOff() {
+        watch("inboxid1234567890");
+        offline = true;
+        inbox.add(0, new String[]{"4-d-y.json", "보고", "내용."});
+        poll();
+        assertEquals(ReadService.IDLE, ReadService.state);
+        offline = false;
+        poll();
+        assertEquals(Arrays.asList("내용."), shadowOf(serviceTts()).getSpokenTextList());
+
+        command(ReadService.ACTION_WATCH_OFF); // 알림창의 "그만 기다리기"
+        shadowOf(Looper.getMainLooper()).idle();
+        assertEquals("", ReadService.watchId);
+        inbox.add(0, new String[]{"5-e-z.json", "또 온 글", "읽지 않는다."});
+        poll();
+        assertEquals(1, shadowOf(serviceTts()).getSpokenTextList().size());
+        assertTrue(shadowOf(service).isForegroundStopped());
+    }
+
+    @Test
+    public void markdownBecomesPlainSentences() {
+        InboxText.Doc d = InboxText.toDoc("## 제목\n\n- 첫째 [링크](http://x.com) 항목\n1. 둘째 `코드` 항목\n\n> 인용 *강조* 문장입니다. 2 * 3 = 6 입니다.\n\n---\n```js\nconst a = 1;\n```");
+        assertEquals(Arrays.asList("제목", "첫째 링크 항목", "둘째 코드 항목", "인용 강조 문장입니다.", "2 * 3 = 6 입니다.", "const a = 1;"), d.texts);
+        assertEquals(Arrays.asList(true, true, true, true, false, true), d.paragraphStart);
     }
 
     @Test

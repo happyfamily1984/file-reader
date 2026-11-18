@@ -157,6 +157,7 @@ public class MainActivity extends Activity implements ReadService.Listener {
     @Override
     protected void onResume() {
         super.onResume();
+        onDoc(); // 화면이 닫혀 있는 동안 앱이 스스로 읽기 시작한 글이 있으면 가져온다
         // 설정에서 목소리를 새로 받고 돌아왔을 수 있으니 목록을 다시 읽는다.
         try {
             ReadService.send(this, ReadService.ACTION_VOICES);
@@ -230,6 +231,15 @@ public class MainActivity extends Activity implements ReadService.Listener {
         runOnUiThread(new Runnable() {
             @Override public void run() {
                 web.evaluateJavascript("window.dispatchEvent(new Event('rfmvoices'))", null);
+            }
+        });
+    }
+
+    @Override
+    public void onDoc() {
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                web.evaluateJavascript("window.dispatchEvent(new Event('rfmdoc'))", null);
             }
         });
     }
@@ -319,6 +329,33 @@ public class MainActivity extends Activity implements ReadService.Listener {
                 }
             });
         }
+
+        /** 받은 글 기다리기: {id, enabled}. 켜 두면 새 글이 도착할 때 화면이 꺼져 있어도 바로 읽는다. */
+        @JavascriptInterface
+        public void watchInbox(String json) throws Exception {
+            JSONObject o = new JSONObject(json);
+            final String id = o.optBoolean("enabled") ? o.optString("id") : "";
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    if (id.equals(ReadService.watchId) && (id.isEmpty() || ReadService.instance != null)) return;
+                    if (!id.equals(ReadService.watchId)) {
+                        ReadService.known = null;
+                        ReadService.arrivals.clear();
+                    }
+                    ReadService.watchId = id;
+                    getSharedPreferences("watch", MODE_PRIVATE).edit().putString("id", id).apply();
+                    if (id.isEmpty() && ReadService.instance == null) return;
+                    try {
+                        ReadService.send(MainActivity.this, ReadService.ACTION_WATCH);
+                    } catch (RuntimeException e) {
+                        onState(ReadService.stateJson(null, "받은 글 기다리기를 시작하지 못했습니다. 앱을 다시 열어 주세요."));
+                    }
+                }
+            });
+        }
+
+        /** 지금 실린 글 전체 (앱이 스스로 실은 받은 글 포함). */
+        @JavascriptInterface public String current() { return ReadService.currentJson(); }
 
         @JavascriptInterface public String state() { return ReadService.stateJson(null, null); }
         @JavascriptInterface public String voices() { return ReadService.voicesJson; }

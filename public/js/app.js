@@ -374,7 +374,31 @@ const inboxUrl = (extra = '') => new URL('api/inbox?id=' + inboxId + extra, docu
 const seen = new Set(store.get('seen', []));
 let known = null, inboxItems = [], checking = false;
 $('auto-read').checked = store.get('autoRead', false);
-$('auto-read').onchange = (e) => store.set('autoRead', e.target.checked);
+$('auto-read').onchange = (e) => { store.set('autoRead', e.target.checked); syncWatch(); };
+
+// 앱(APK): 새 글 확인과 자동 읽기를 앱의 재생 서비스가 맡는다. 화면이 꺼져 있거나 닫혀 있어도 읽기 시작한다.
+const nativeWatch = isNative && !!window.ReadForMeNative.watchInbox;
+function syncWatch() {
+  if (nativeWatch) window.ReadForMeNative.watchInbox(JSON.stringify({ id: inboxId, enabled: $('auto-read').checked }));
+}
+// 앱이 스스로 읽기 시작한 글이 있으면 화면에 가져와 보여 준다. 가져왔으면 true.
+function adoptNative(open = true) {
+  if (!nativeWatch) return false;
+  const cur = JSON.parse(window.ReadForMeNative.current() || '{}');
+  if ($('auto-read').checked && cur.watching === false) { // 알림창에서 "그만 기다리기"를 누른 경우
+    $('auto-read').checked = false;
+    store.set('autoRead', false);
+  }
+  if (cur.played?.length) markSeen(cur.played.map((item) => ({ item })));
+  if (!cur.texts?.length || cur.state === 'idle') return false;
+  const mine = player.chunks;
+  if (mine.length === cur.texts.length && mine.every((c, i) => (c.say || c.text) === cur.texts[i])) return false; // 이미 보고 있는 글
+  showDoc(cur.title || '받은 글', cur.texts.map((text, i) => ({ text, np: cur.np ? !!cur.np[i] : true })), cur.i, false);
+  if (open) openReader();
+  return true;
+}
+addEventListener('rfmdoc', () => adoptNative());
+if (nativeWatch) $('auto-read').parentElement.lastChild.textContent = ' 도착하면 바로 읽기 (화면이 꺼져 있어도)';
 
 function copy(text, done) {
   (navigator.clipboard?.writeText(text) ?? Promise.reject()).then(() => status(done), () => prompt('아래 내용을 복사하세요', text));
@@ -398,6 +422,7 @@ $('change-id').onclick = () => {
   store.set('inbox', id);
   seen.clear();
   known = null;
+  syncWatch();
   showAddr();
   checkInbox();
 };
@@ -451,12 +476,14 @@ async function checkInbox(quiet) {
     const arrived = known ? inboxItems.filter((it) => !known.has(it.item)) : [];
     known = new Set(inboxItems.map((it) => it.item));
     renderInbox();
-    if (arrived.length && $('auto-read').checked && player.state !== 'playing') await openInboxItem(arrived[0]);
+    // 앱에서는 재생 서비스가 직접 읽기 시작하므로 여기서는 하지 않는다.
+    if (!nativeWatch && arrived.length && $('auto-read').checked && player.state !== 'playing') await openInboxItem(arrived[0]);
   } catch (e) { if (!quiet) status(e.message, true); } finally { checking = false; }
 }
 setInterval(() => { if (document.visibilityState === 'visible') checkInbox(true); }, 15000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkInbox(true); });
 checkInbox(true);
+syncWatch();
 
 // ── 앱 설치 · 오프라인 ──────────────────────────────
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('서비스 워커 등록 실패', e));
@@ -526,7 +553,11 @@ if (takeNativeShare()) {
   if (url) { $('link').value = url; openLink(url); } else openText(shared, params.get('title'));
 } else {
   const doc = store.get('doc', null);
-  if (doc?.chunks?.length) run(async () => showDoc(doc.title, doc.chunks, store.get('pos', 0), false));
+  // 앱이 스스로 다른 글(방금 도착한 받은 글)을 읽는 중이면 그 글을 보여 주고, 아니면 지난번에 읽던 글을 연다.
+  const cur = nativeWatch ? JSON.parse(window.ReadForMeNative.current() || '{}') : {};
+  const sameAsStored = doc?.chunks?.length === cur.texts?.length && doc.chunks.every((c, i) => (c.say || c.text) === cur.texts[i]);
+  if (cur.state && cur.state !== 'idle' && cur.texts?.length && !sameAsStored) run(async () => { adoptNative(false); });
+  else if (doc?.chunks?.length) run(async () => showDoc(doc.title, doc.chunks, store.get('pos', 0), false));
   const tab = params.get('tab') || store.get('tab', 'doc');
   if (params.has('tab')) history.replaceState(null, '', location.pathname);
   if (history.state?.view) render(history.state); // 새로고침: 보던 화면 그대로
