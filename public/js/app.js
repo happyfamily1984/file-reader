@@ -555,7 +555,8 @@ if (takeNativeShare()) {
   const doc = store.get('doc', null);
   // 앱이 스스로 다른 글(방금 도착한 받은 글)을 읽는 중이면 그 글을 보여 주고, 아니면 지난번에 읽던 글을 연다.
   const cur = nativeWatch ? JSON.parse(window.ReadForMeNative.current() || '{}') : {};
-  const sameAsStored = doc?.chunks?.length === cur.texts?.length && doc.chunks.every((c, i) => (c.say || c.text) === cur.texts[i]);
+  const sameAsStored = !!doc?.chunks && !!cur.texts && doc.chunks.length === cur.texts.length
+    && doc.chunks.every((c, i) => (c.say || c.text) === cur.texts[i]);
   if (cur.state && cur.state !== 'idle' && cur.texts?.length && !sameAsStored) run(async () => { adoptNative(false); });
   else if (doc?.chunks?.length) run(async () => showDoc(doc.title, doc.chunks, store.get('pos', 0), false));
   const tab = params.get('tab') || store.get('tab', 'doc');
